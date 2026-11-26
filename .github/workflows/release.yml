@@ -1,0 +1,141 @@
+name: Build & Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag_suffix:
+        description: '附加标签后缀（可选，重发同一天版本时用）'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platforms;android-33" "build-tools;34.0.0"
+
+      # 本地 settings.gradle 优先阿里云镜像（国内加速）；CI 在海外，改用官方仓库避免超时
+      - name: Use official Maven repositories in CI
+        working-directory: source/app
+        run: |
+          cat > settings.gradle <<'EOF'
+          pluginManagement {
+              repositories { google(); mavenCentral(); gradlePluginPortal() }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories { google(); mavenCentral() }
+          }
+          rootProject.name = "RemoteControl"
+          include ':app'
+          EOF
+
+      - name: Restore signing keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::缺少 Secret KEYSTORE_BASE64。请用 base64 编码 source/app/app/keystore.jks 后存入仓库 Secrets。"
+            exit 1
+          fi
+          mkdir -p source/app/app
+          echo "$KEYSTORE_BASE64" | base64 -d > source/app/app/keystore.jks
+          echo "keystore restored: $(stat -c%s source/app/app/keystore.jks) bytes"
+
+      - name: Read version from build.gradle
+        id: ver
+        run: |
+          VERSION=$(grep -oP 'versionName\s+"\K[^"]+' source/app/app/build.gradle)
+          CODE=$(grep -oP 'versionCode\s+\K[0-9]+' source/app/app/build.gradle)
+          DATE=$(TZ=Asia/Shanghai date +%Y%m%d)
+          SUFFIX="${{ github.event.inputs.tag_suffix }}"
+          TAG="v${VERSION}-${DATE}"
+          if [ -n "$SUFFIX" ]; then TAG="${TAG}-${SUFFIX}"; fi
+          # 同日重复构建：追加 -2, -3 ... 避免与已有 release 冲突
+          BASE="$TAG"; n=2
+          while gh release view "$TAG" >/dev/null 2>&1; do TAG="${BASE}-${n}"; n=$((n+1)); done
+          echo "version=$VERSION"  >> $GITHUB_OUTPUT
+          echo "code=$CODE"        >> $GITHUB_OUTPUT
+          echo "date=$DATE"        >> $GITHUB_OUTPUT
+          echo "tag=$TAG"          >> $GITHUB_OUTPUT
+          echo "Release tag: $TAG (versionName=$VERSION, versionCode=$CODE)"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Build release APK
+        working-directory: source/app
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Prepare artifacts
+        id: art
+        run: |
+          set -e
+          V="${{ steps.ver.outputs.version }}"
+          T="${{ steps.ver.outputs.tag }}"
+          mkdir -p release
+          APK="release/S20Remote-${V}-${T}.apk"
+          cp source/app/app/build/outputs/apk/release/app-release.apk "$APK"
+
+          # S20 magisk 模块：用本次编译的 APK 替换模块内旧 APK 后重打包
+          rm -rf /tmp/s20magisk && mkdir -p /tmp/s20magisk
+          unzip -q deploy/app/s20remote-magisk.zip -d /tmp/s20magisk
+          cp "$APK" /tmp/s20magisk/system/priv-app/S20Remote/S20Remote.apk
+          (cd /tmp/s20magisk && zip -q -r "$GITHUB_WORKSPACE/release/s20remote-magisk-${T}.zip" .)
+
+          # x800 magisk 包：仅含开机脚本 + 热点 helper dex，APK 单独安装
+          cp deploy/app/x800-magisk.zip "release/x800-magisk-${T}.zip"
+
+          echo "apk=$APK" >> $GITHUB_OUTPUT
+          ls -lh release/
+
+      - name: Create GitHub Release
+        run: |
+          set -e
+          T="${{ steps.ver.outputs.tag }}"
+          V="${{ steps.ver.outputs.version }}"
+          C="${{ steps.ver.outputs.code }}"
+          NOTES=$(cat <<EOF
+          自动构建发布 - ${T}
+
+          - versionName: ${V} / versionCode: ${C}
+          - minSdk 23（Android 6.0 乐视 1 Pro X800 与 S20 通用，签名一致）
+          - 产物：通用 APK + S20 magisk 模块（已内嵌本次 APK）+ X800 magisk 开机/热点包
+          - 构建时间：$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M:%S %Z')
+
+          ## 安装
+          - 直接安装 APK：\`adb install -r S20Remote-${V}-${T}.apk\`
+          - S20 系统应用方案：刷入 magisk 模块（保留 TETHER 特权）
+          - X800：装 APK + 刷入 x800-magisk 包（开机脚本与热点 helper）
+
+          ## 变更
+          $(git log -1 --pretty=format:'%h %s' ${{ github.sha }})
+          EOF
+          )
+          gh release create "$T" \
+            release/*.apk release/*.zip \
+            --title "S20Remote ${V} (${T})" \
+            --notes "$NOTES"
+        env:
+          GH_TOKEN: ${{ github.token }}
