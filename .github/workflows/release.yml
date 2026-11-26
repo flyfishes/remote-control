@@ -30,11 +30,28 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      # android-actions/setup-android@v3 内部会安装已从 Google 仓库移除的废弃包 'tools'，
+      # 导致 sdkmanager 以 exit code 1 失败。改用 runner 预装的 Android SDK。
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        run: |
+          set -e
+          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          echo "Using Android SDK at: $SDK"
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
 
-      - name: Install Android SDK packages
-        run: sdkmanager "platforms;android-33" "build-tools;34.0.0"
+          # cmdline-tools 版本目录会变化（如 16.0 / latest），动态定位 sdkmanager
+          SDKMANAGER=$(find "$SDK/cmdline-tools" -type f -path '*/bin/sdkmanager' | head -n1)
+          if [ -z "$SDKMANAGER" ]; then
+            echo "::error::未在 $SDK/cmdline-tools 下找到 sdkmanager"
+            exit 1
+          fi
+          echo "sdkmanager: $SDKMANAGER"
+
+          # 接受许可（runner 通常已接受，此处兜底）
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+
+          "$SDKMANAGER" "platforms;android-33" "build-tools;34.0.0"
 
       # 本地 settings.gradle 优先阿里云镜像（国内加速）；CI 在海外，改用官方仓库避免超时
       - name: Use official Maven repositories in CI
