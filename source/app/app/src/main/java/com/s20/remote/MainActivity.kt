@@ -1142,6 +1142,17 @@ class MainActivity : AppCompatActivity() {
         IdleScreenOff.onUiResume()
         RootShell.recheck()
         Capabilities.probe(recheck = true)
+        // 服务未运行时自动拉起：开机广播被 ROM 自启动管控拦截（如乐视 EUI）时，
+        // 用户打开 App 即恢复服务，无需手动点「启动服务」
+        if (!MainService.running) {
+            try {
+                com.s20.remote.core.Compat.startForegroundCompat(
+                    this, Intent(this, MainService::class.java))
+                Toast.makeText(this, "服务未运行，已自动启动", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Toast.makeText(this, "自动启动服务失败：${e.message}", Toast.LENGTH_LONG).show()
+            }
+        }
         if (rootState == 0) checkRoot() else render()
         startTicker()
     }
