@@ -1,0 +1,27 @@
+# 构建产物
+**/build/
+**/.gradle/
+*.iml
+.idea/
+
+# Python
+__pycache__/
+*.pyc
+
+# 运行期数据（数据库/日志/运行时证书私钥）
+*.db
+*.db-shm
+*.db-wal
+*.log
+*.key
+
+# 本地环境
+local.properties
+
+# 其他文件夹
+tools/
+
+# 签名密钥与本地工作区
+source/app/app/keystore.jks
+.workbuddy/
+*.pid

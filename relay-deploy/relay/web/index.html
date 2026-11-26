@@ -1,0 +1,1209 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>远程控制台</title>
+<style>
+:root{--bg:#f5f6fa;--card:#fff;--tx:#2c2c2a;--tx2:#888780;--bord:#e2e1db;--blue:#185fa5;--teal:#0f6e56;--red:#a32d2d;--amber:#854f0b}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--tx);font-size:14px}
+.wrap{max-width:960px;margin:0 auto;padding:16px}
+h1{font-size:18px;font-weight:500;padding:8px 0}
+h2{font-size:15px;font-weight:500;margin:16px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--bord)}
+.card{background:var(--card);border:1px solid var(--bord);border-radius:12px;padding:12px 16px;margin-bottom:12px}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px}
+.kv{font-size:13px;line-height:1.9}
+.kv b{color:var(--tx2);font-weight:400;display:inline-block;min-width:84px}
+button{border:1px solid var(--bord);background:#fff;border-radius:8px;padding:7px 14px;cursor:pointer;font-size:13px}
+button:hover{border-color:var(--blue);color:var(--blue)}
+button.pri{background:var(--blue);border-color:var(--blue);color:#fff}
+button.dng{background:var(--red);border-color:var(--red);color:#fff}
+button.on{background:var(--teal);border-color:var(--teal);color:#fff}
+input,select{border:1px solid var(--bord);border-radius:8px;padding:7px 10px;font-size:13px;width:100%}
+label{font-size:12px;color:var(--tx2)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--bord);word-break:break-all}
+th{color:var(--tx2);font-weight:400;font-size:12px}
+pre{background:#f1efe8;border-radius:8px;padding:10px;font-size:12px;overflow:auto;max-height:340px;white-space:pre-wrap;word-break:break-all}
+.tabs{display:flex;gap:4px;margin:8px 0 12px;flex-wrap:wrap}
+.tabs button{border-radius:8px 8px 0 0;border-bottom:none}
+.tabs button.act{background:var(--blue);border-color:var(--blue);color:#fff}
+.status-dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px}
+.dot-on{background:#3b6d11}.dot-off{background:#e24b4a}
+.small{font-size:12px;color:var(--tx2)}
+#log{background:#1e1e1e;color:#d4d4d4;font-family:Consolas,monospace}
+.bar{max-height:180px;overflow-y:auto;background:#1e1e1e;color:#d4d4d4;font-family:Consolas,monospace;font-size:12px;line-height:1.8;padding:8px 10px;border-radius:8px}
+.bar div{white-space:pre-wrap;word-break:break-all}
+.bar .ok{color:#7ec96f}.bar .err{color:#e26b6b}.bar .ts{color:#8a8a8a}
+.swItem{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--bord);border-radius:8px;padding:5px 10px;background:#fff}
+.swItem button{padding:3px 10px;font-size:12px}
+@media (max-width:600px){.grid{grid-template-columns:1fr}}
+input[readonly]{opacity:.7;cursor:not-allowed}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>远程控制台 <span id="connState" class="small"></span></h1>
+
+<div class="card">
+  <div class="row">
+    <div style="flex:1;min-width:220px">
+      <label>接入方式</label>
+      <select id="mode" onchange="saveMode()">
+        <option value="direct">直连手机（HTTPS: https://域名:8999）</option>
+        <option value="relay">经中转服务器（WSS: wss://域名/ws）</option>
+      </select>
+    </div>
+    <div style="flex:1.4;min-width:280px">
+      <label>手机地址 / 中转地址 <span id="epHint" class="small"></span></label>
+      <input id="endpoint" readonly placeholder="自动读取手机配置…">
+    </div>
+    <label class="small" style="display:flex;align-items:center;gap:4px;white-space:nowrap">
+      <input type="checkbox" id="epManual" onchange="toggleManual()" style="width:auto;margin:0">手动指定
+    </label>
+    <div style="flex:1;min-width:160px">
+      <label>Token</label>
+      <input id="token" type="password">
+    </div>
+    <div style="flex:0.6;min-width:120px">
+      <label>设备名</label>
+      <input id="device" value="s20">
+    </div>
+    <button class="pri" onclick="connect()">连接</button>
+    <span id="dot"></span>
+  </div>
+</div>
+
+<div class="card">
+  <div class="row" style="margin-bottom:6px">
+    <b>操作记录</b>
+    <span class="small">所有操作结果依次追加于此，不会自动消失</span>
+    <button style="margin-left:auto" onclick="clearBar()">清空记录</button>
+  </div>
+  <div id="bar" class="bar"><div class="ts">—— 就绪 ——</div></div>
+</div>
+
+<div class="tabs" id="tabs">
+  <button class="act" data-t="status">状态</button>
+  <button data-t="hotspot">热点/网络</button>
+  <button data-t="sms">短信</button>
+  <button data-t="apps">应用</button>
+  <button data-t="files">文件</button>
+  <button data-t="screen">屏幕</button>
+  <button data-t="media">媒体</button>
+  <button data-t="config">配置</button>
+  <button data-t="log">日志</button>
+</div>
+
+<div id="tab-status">
+  <div class="card"><div class="row">
+    <button onclick="refreshAll()">刷新状态</button>
+    <button onclick="refreshSw()">刷新开关</button>
+    <button id="btnScreenOff" onclick="screenOff()">熄屏</button>
+    <button id="btnWakeUp" onclick="wakeUp()">唤醒</button>
+    <button onclick="cmd('ddns.update',{}).then(r=>logLine('DDNS: '+JSON.stringify(r.data)))">更新 DDNS</button>
+    <button id="btnReboot" class="dng" onclick="rebootDev()">重启手机</button>
+  </div>
+  <div class="row" id="swRow" style="margin-top:8px">开关加载中…</div></div>
+  <div class="card"><b>能力与权限</b><div id="capBox" class="kv" style="margin-top:6px">读取中…</div></div>
+  <div id="lastPush" class="small" style="margin:0 0 8px">最近上报：读取中…</div>
+  <div class="card"><div id="statusBox" class="kv">点击「刷新状态」</div></div>
+</div>
+
+<div id="tab-hotspot" style="display:none">
+  <div class="card">
+    <div class="row">
+      <button onclick="hotspot(true)">开热点</button>
+      <button onclick="hotspot(false)">关热点</button>
+      <button onclick="showHotspot()">查询状态</button>
+    </div>
+    <pre id="hsOut" style="margin-top:8px"></pre>
+  </div>
+  <div class="card">
+    <label>自定义热点参数（写入后按开启生效）</label>
+    <div class="grid" style="margin-top:6px">
+      <div><label>SSID</label><input id="hsSsid" placeholder="热点名称"></div>
+      <div><label>密码（≥8位）</label><input id="hsPass" placeholder="wpa2 密码"></div>
+      <div><label>频段</label><select id="hsBand"><option value="">不变</option><option value="2g">2.4GHz</option><option value="5g">5GHz</option></select></div>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button onclick="hotspotWithCfg(true)" class="pri">按此配置开启</button>
+      <button onclick="hotspotWithCfg(false)">仅写入配置并关闭</button>
+    </div>
+    <pre id="hsCfgOut" style="margin-top:8px"></pre>
+  </div>
+</div>
+
+<div id="tab-sms" style="display:none">
+  <div class="card">
+    <div class="row">
+      <input id="smsAddr" placeholder="号码过滤（可空）" style="flex:1;min-width:150px">
+      <input id="smsKw" placeholder="内容关键字（可空）" style="flex:1;min-width:150px">
+      <select id="smsRange">
+        <option value="all">全部</option>
+        <option value="today">当天</option>
+        <option value="week">本周</option>
+        <option value="lastweek">上周</option>
+        <option value="month">本月</option>
+      </select>
+      <select id="smsLimit"><option>50</option><option>100</option><option>300</option><option>1000</option></select>
+      <button onclick="loadSms()">查询</button>
+    </div>
+  </div>
+  <div class="card">
+    <div class="row">
+      <input id="smsTo" placeholder="收件人号码" style="flex:1;min-width:150px">
+      <input id="smsText" placeholder="短信内容" style="flex:2;min-width:200px">
+      <button onclick="sendSms()" class="pri">发送</button>
+      <button onclick="delChecked()" class="dng">删除选中</button>
+      <button onclick="delAll()" class="dng">清空全部</button>
+    </div>
+  </div>
+  <div class="card"><div id="smsBox">未查询</div></div>
+</div>
+
+<div id="tab-apps" style="display:none">
+  <div class="card">
+    <div class="row">
+      <input id="appKw" placeholder="应用名/包名过滤" style="flex:1;min-width:180px">
+      <label><input type="checkbox" id="appSys"> 含系统应用</label>
+      <button onclick="loadApps()">查询</button>
+      <input type="file" id="apkFile" accept=".apk" style="display:none" onchange="uploadApk(this)">
+      <button onclick="document.getElementById('apkFile').click()">上传APK并安装</button>
+    </div>
+    <div id="apkUp" class="small"></div>
+  </div>
+  <div class="card" style="overflow:auto;max-height:460px"><div id="appBox">未查询</div></div>
+</div>
+
+<div id="tab-files" style="display:none">
+  <div class="card">
+    <div class="row">
+      <input id="fPath" value="/sdcard/" style="flex:2;min-width:220px">
+      <button onclick="listFiles()">浏览</button>
+      <input type="file" id="upFile" style="display:none" onchange="uploadFile(this)">
+      <button onclick="document.getElementById('upFile').click()">上传到当前目录</button>
+      <button onclick="newFolder()">新建文件夹</button>
+    </div>
+    <div id="fUp" class="small"></div>
+  </div>
+  <div class="card" style="overflow:auto;max-height:460px"><div id="fileBox">未浏览</div></div>
+</div>
+
+<div id="tab-screen" style="display:none">
+  <div class="card">
+    <div class="row">
+      <button class="pri" onclick="shot()">截图</button>
+      <div style="width:110px"><label>宽度(px)</label>
+        <select id="shotW"><option value="480">480</option><option value="720" selected>720</option><option value="1080">1080</option></select></div>
+      <div style="width:110px"><label>JPEG 质量</label>
+        <select id="shotQ"><option value="50">50</option><option value="70" selected>70</option><option value="85">85</option></select></div>
+      <button onclick="saveShot()">保存图片</button>
+      <button onclick="reloadShot()">刷新画面</button>
+      <span id="shotInfo" class="small" style="flex:1;min-width:180px">点击「截图」获取手机当前屏幕</span>
+    </div>
+    <div class="small" style="margin-top:8px">
+      截图由手机 root 执行 <code>screencap</code>，等比缩放到指定宽度后以 JPEG 回传（约 80~200KB），
+      原图保存在手机 DE 缓存目录。<b>屏幕熄灭时通常只能拍到黑屏</b>，可先到「状态」页点「唤醒」。
+    </div>
+  </div>
+  <div class="card" style="text-align:center">
+    <div id="shotBox" class="small">暂无截图</div>
+  </div>
+</div>
+
+<div id="tab-media" style="display:none">
+  <div class="card">
+    <div class="row">
+      <button class="pri" onclick="takePhoto()">拍照</button>
+      <div style="width:100px"><label>摄像头</label>
+        <select id="camFacing"><option value="back" selected>后置</option><option value="front">前置</option></select></div>
+      <div style="width:100px"><label>宽度(px)</label>
+        <select id="photoW"><option value="720">720</option><option value="1080" selected>1080</option><option value="1440">1440</option></select></div>
+      <div style="width:100px"><label>JPEG 质量</label>
+        <select id="photoQ"><option value="60">60</option><option value="80" selected>80</option><option value="90">90</option></select></div>
+      <button onclick="savePhoto()">保存图片</button>
+      <span id="photoInfo" class="small" style="flex:1;min-width:180px">点击「拍照」由手机摄像头直接拍摄（无需亮屏）</span>
+    </div>
+    <div class="small" style="margin-top:8px">
+      拍照使用系统相机硬件（Camera2）在后台直接拍摄；本地会另存一份到
+      <code>/sdcard/DCIM/S20Remote</code>。缺权限时自动用 root 授权；仍不可用则拉起系统相机 App 人工拍摄。
+    </div>
+  </div>
+  <div class="card" style="text-align:center">
+    <div id="photoBox" class="small">暂无照片</div>
+  </div>
+  <div class="card">
+    <div class="row">
+      <button class="pri" id="recBtn" onclick="doRecord()">开始录音</button>
+      <button id="recStopBtn" style="display:none" onclick="doRecordStop()">停止</button>
+      <div style="width:110px"><label>时长(秒)</label>
+        <input id="recSec" type="number" value="15" min="1" max="86400" style="width:100%"></div>
+      <span id="recInfo" class="small" style="flex:1;min-width:180px">录音由手机麦克风采集，AAC 编码（1~86400 秒，最长 24 小时）</span>
+    </div>
+    <div class="small" style="margin-top:8px">
+      录音命令立即返回、后台录制：开始后本页每 2 秒轮询进度，可随时点「停止」提前结束；
+      完成后文件保存在 <code>/sdcard/Music/S20Remote</code> 并可点击下载。屏幕锁定时开始录音会先自动解锁（约 5-10 秒）。
+    </div>
+  </div>
+  <div class="card" style="text-align:center">
+    <div id="recBox" class="small">暂无录音</div>
+  </div>
+</div>
+
+<div id="tab-config" style="display:none">
+  <div class="card">
+    <h2>中转服务器</h2>
+    <div class="grid">
+      <div><label>中转服务器地址（relayUrl）</label><input id="cfgRelay"></div>
+      <div><label>设备名</label><input id="cfgDevName"></div>
+    </div>
+  </div>
+  <div class="card">
+    <h2>状态上报 / 告警</h2>
+    <div class="grid">
+      <div><label>心跳间隔（秒）</label><input id="cfgHeartbeat" type="number" min="10" max="3600"></div>
+      <div><label>电量低告警（%）</label><input id="cfgBatWarn" type="number" min="1" max="100"></div>
+      <div><label>电池温度告警（℃）</label><input id="cfgTempWarn" type="number" min="20" max="90"></div>
+      <div><label>CPU温度告警（℃）</label><input id="cfgCpuWarn" type="number" min="20" max="120"></div>
+      <div><label>可用存储告警（GB）</label><input id="cfgStorageWarn" type="number" min="1" max="512"></div>
+    </div>
+  </div>
+  <div class="card">
+    <h2>唤醒 / 解锁</h2>
+    <div class="grid">
+      <div><label>唤醒时自动解锁</label><select id="cfgUnlockEnabled"><option value="1">开启（锁屏则模拟 PIN 解锁）</option><option value="0">关闭（只点亮屏幕）</option></select></div>
+      <div><label>锁屏 PIN</label><input id="cfgUnlockPin" type="password" placeholder="留空不修改"></div>
+    </div>
+    <div class="small" style="margin-top:6px">
+      解锁方式与开机脚本一致：点亮 → 上滑 → 输入 PIN，最多 3 轮。PIN 明文存于设备保护(DE)区，
+      接口不回显明文；持有 token 的人点「唤醒」即可解锁屏幕。<br>
+      修改 PIN 会<b>同时写入 magisk 开机脚本</b>（<code>/data/adb/modules/s20remote/service.sh</code> 的 UNLOCK_PIN 行），
+      下次开机即用新 PIN 自动解锁；保存后操作记录会显示同步结果。
+    </div>
+  </div>
+  <div class="card">
+    <h2>开关自动恢复</h2>
+    <div class="grid">
+      <div><label>WiFi 关闭后自动打开</label><select id="cfgArWifi"><option value="0">不处理</option><option value="1">自动打开</option></select></div>
+      <div><label>移动数据关闭后自动打开</label><select id="cfgArData"><option value="0">不处理</option><option value="1">自动打开</option></select></div>
+      <div><label>蓝牙关闭后自动打开</label><select id="cfgArBt"><option value="0">不处理</option><option value="1">自动打开</option></select></div>
+      <div><label>定位关闭后自动打开</label><select id="cfgArLoc"><option value="0">不处理</option><option value="1">自动打开</option></select></div>
+      <div><label>热点关闭后自动打开</label><select id="cfgArHotspot"><option value="0">不处理</option><option value="1">自动打开</option></select></div>
+      <div><label>检查间隔（秒，默认300）</label><input id="cfgGuardSec" type="number" min="30" max="600" placeholder="300"></div>
+    </div>
+    <div class="small" style="margin:6px 0">
+      说明：检查在手机本地独立运行，不依赖中转连接，因此 WiFi 被关闭导致中转断开后仍能自动恢复。
+      手动关闭同样会被下一轮还原（按配置无条件恢复）。<br>
+      热点与 WiFi 互斥（开热点会关 WiFi）：热点开着时不动 WiFi、WiFi 开着时不动热点；两者都关且都勾选时优先恢复 WiFi。
+    </div>
+    <div class="row">
+      <button onclick="guardCheck()">立即检查一次</button>
+    </div>
+    <pre id="guardOut"></pre>
+  </div>
+  <div class="card">
+    <h2>HTTPS 证书 / 传输安全</h2>
+    <div class="grid">
+      <div><label>启用 HTTPS</label><select id="cfgTlsEnabled"><option value="1">开启（推荐）</option><option value="0">关闭（明文，仅调试）</option></select></div>
+      <div><label>中转 wss 跳过证书校验</label><select id="cfgRelayInsecure"><option value="1">是（自签中转）</option><option value="0">否（严格校验）</option></select></div>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button onclick="loadCert()">查看证书</button>
+      <button onclick="regenCert()">重新生成自签证书</button>
+      <button onclick="openCertPem()">下载证书 PEM（直连）</button>
+    </div>
+    <pre id="certOut"></pre>
+  </div>
+  <div class="card">
+    <h2>数据流量监控</h2>
+    <div class="grid">
+      <div><label>启用</label><select id="cfgTrafficEnabled"><option value="0">关闭</option><option value="1">开启</option></select></div>
+      <div><label>查询方式</label><select id="cfgTrafficMode"><option value="sms">短信指令（运营商）</option><option value="cmd">本地命令</option></select></div>
+      <div><label>查询号码</label><input id="cfgTrafficNumber" placeholder="10086"></div>
+      <div><label>查询命令文本</label><input id="cfgTrafficCmd" placeholder="CXLL"></div>
+      <div><label>本地查询命令（输出已用流量 MB）</label><input id="cfgTrafficLocalCmd" placeholder="留空则不用"></div>
+      <div><label>报警阈值（MB）</label><input id="cfgTrafficWarnMb" type="number" min="1"></div>
+      <div><label>报警短信接收号码</label><input id="cfgTrafficAlertNumber" placeholder="接收告警的手机号"></div>
+      <div><label>检查间隔（分钟，1440=24小时）</label><input id="cfgTrafficCheckMin" type="number" min="10"></div>
+    </div>
+    <div class="small" id="cfgTrafficInfo" style="margin-top:6px"></div>
+  </div>
+  <div class="card">
+    <h2>DDNS 动态域名</h2>
+    <div class="grid">
+      <div><label>服务商</label><select id="cfgDdnsProvider"><option value="dnsexit">DNSExit</option></select></div>
+      <div><label>用户名</label><input id="cfgDdnsUser"></div>
+      <div><label>密码 / API Key</label><input id="cfgDdnsPass" type="password"></div>
+      <div><label>域名（host）</label><input id="cfgDdnsHost"></div>
+      <div><label>IP 类型</label><select id="cfgDdnsIpType"><option value="ipv6">IPv6</option><option value="ipv4">IPv4</option><option value="all">IPv4+IPv6</option></select></div>
+      <div><label>更新间隔（分钟，默认360=6小时）</label><input id="cfgDdnsMin" type="number" value="360" min="1"></div>
+    </div>
+    <div class="row" style="margin-top:8px"><button onclick="cmd('ddns.update',{}).then(r=>logLine('更新 DDNS: '+JSON.stringify(r.data)))">立即更新 DDNS</button><button onclick="cmd('ddns.get',{}).then(r=>{out('cfgOut',r.data);logLine('查询 DDNS 状态完成')})">查询 DDNS 状态</button></div>
+  </div>
+  <div class="card">
+    <h2>日志</h2>
+    <div class="row">
+      <label><input type="checkbox" id="logFileSw"> 日志落盘（保存到内部存储 logs 目录）</label>
+      <span class="small" id="logPathHint"></span>
+    </div>
+  </div>
+  <div class="card">
+    <div class="row">
+      <button onclick="loadConfig()">读取配置</button>
+      <button onclick="saveConfig()" class="pri">保存配置</button>
+      <button onclick="cmd('service.restart',{}).then(()=>logLine('服务重启指令已发送 ✓',true)).catch(()=>{})">重启服务</button>
+    </div>
+    <pre id="cfgOut"></pre>
+  </div>
+</div>
+
+<div id="tab-log" style="display:none">
+  <div class="card"><div class="row">
+    <button onclick="loadLog()">拉取日志（内存）</button>
+    <button onclick="loadDiskLog()">拉取磁盘日志</button>
+    <button onclick="downloadLog()">下载日志文件</button>
+    <button onclick="clearLog()" class="dng">清空日志</button>
+  </div>
+  <div class="small" id="logInfo" style="margin-top:6px"></div></div>
+  <div class="card"><pre id="log"></pre></div>
+</div>
+
+</div>
+
+<script>
+// ====== 连接层 ======
+let mode='direct', ep='', token='', device='s20', ws=null, directOK=false;
+const $=id=>document.getElementById(id);
+const out=(id,obj)=>{$(id).textContent=typeof obj==='string'?obj:JSON.stringify(obj,null,2)};
+// ====== 操作记录状态栏（只追加，不自动消失） ======
+function logLine(t,ok){
+  const cls=ok===undefined?'':(ok?'ok':'err');
+  const ts=new Date().toLocaleTimeString('zh-CN',{hour12:false});
+  const bar=$('bar');
+  const d=document.createElement('div');
+  d.innerHTML='<span class="ts">['+ts+']</span> <span class="'+cls+'">'+esc(String(t))+'</span>';
+  bar.appendChild(d);
+  bar.scrollTop=bar.scrollHeight;
+}
+function clearBar(){$('bar').innerHTML='<div class="ts">—— 已清空 ——</div>'}
+// 兼容旧调用：所有 toast 提示改为状态栏追加
+function notify(t){logLine(t)}
+// ====== 地址自动推导（直接读手机配置，无需手填）======
+let epAuto=true, epInfo={relay:'',direct:'',ddns:'',lanIp:'',httpPort:8999,tls:true,origin:'relay'};
+
+function guessEp(m){
+  if(m==='relay') return (location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws';
+  return 'https://'+location.hostname+':8999';
+}
+function applyEp(m){
+  const v=(m==='relay')?(epInfo.relay||guessEp('relay')):(epInfo.direct||guessEp('direct'));
+  ep=v; $('endpoint').value=v; localStorage.setItem('s20ep',v);
+  $('epHint').textContent=(m==='relay')
+    ? ((epInfo.relayCfg&&epInfo.relayCfg!==epInfo.relay)
+        ? '（自动：跟随当前入口；手机配置为 '+epInfo.relayCfg+'）'
+        : '（自动：跟随当前访问地址）')
+    : (epInfo.lanIp?('（自动：DDNS 域名；局域网可用 https://'+epInfo.lanIp+':'+epInfo.httpPort+'）'):'（自动：手机 DDNS 域名）');
+}
+function saveMode(){
+  mode=$('mode').value;
+  localStorage.setItem('s20mode',mode);
+  if(epAuto) applyEp(mode);
+  ep=$('endpoint').value; localStorage.setItem('s20ep',ep);
+  localStorage.setItem('s20token',token=$('token').value);
+  localStorage.setItem('s20dev',device=$('device').value);
+}
+function toggleManual(){
+  epAuto=!$('epManual').checked;
+  localStorage.setItem('s20epauto',epAuto?'1':'0');
+  $('endpoint').readOnly=epAuto;
+  if(epAuto) resolveEndpoints(); else $('endpoint').focus();
+}
+// 判断本页来自手机(:8999)还是中转服务器
+// 手机有 /ping 路由（401 或 200），中转服务器没有（404），据此区分
+async function detectOrigin(){
+  try{
+    const r=await fetch('/ping',{cache:'no-store',headers:token?{'X-Token':token}:{}});
+    return (r.status===404)?'relay':'phone';
+  }catch(e){
+    return (String(location.port)==='8999')?'phone':'relay';
+  }
+}
+// 经中转服务器调用手机指令
+async function relayCall(c,params){
+  const r=await fetch('/api/cmd'+(token?('?token='+encodeURIComponent(token)):''),{
+    method:'POST',headers:{'Content-Type':'application/json; charset=utf-8','X-Token':token},
+    body:JSON.stringify({device,cmd:c,params:params||{},id:'ep_'+c+'_'+Date.now()})});
+  if(r.status===401) throw new Error('401 未授权');
+  const j=await r.json();
+  if(j.response) return j.response.data;
+  throw new Error(j.msg||('code '+j.code));
+}
+// 同源直连手机调用
+async function directCall(c,params){
+  const r=await fetch('/cmd',{method:'POST',headers:{'Content-Type':'application/json; charset=utf-8','X-Token':token},
+    body:JSON.stringify({cmd:c,params:params||{},id:'ep_'+c+'_'+Date.now()})});
+  if(r.status===401) throw new Error('401 未授权');
+  const j=await r.json();
+  if(j.code!==undefined&&j.code!==0) throw new Error(j.msg||('code '+j.code));
+  return j.data;
+}
+function lanIpOf(st){
+  const v4=((st&&st.ips&&st.ips[0]&&st.ips[0].v4)||[]).map(x=>x.addr);
+  return v4.find(a=>/^192\.168\./.test(a))||v4.find(a=>/^10\./.test(a))||v4.find(a=>/^172\.(1[6-9]|2\d|3[01])\./.test(a))||'';
+}
+async function resolveEndpoints(){
+  if(!epAuto){ $('endpoint').readOnly=false; return; }
+  $('endpoint').readOnly=true;
+  const origin=await detectOrigin();
+  epInfo.origin=origin;
+  let cfg=null,st=null;
+  try{
+    if(origin==='phone'){
+      if(token){ cfg=await directCall('config.get'); st=await directCall('status.get'); }
+    }else{
+      if(token){
+        const sl=await (await fetch('/api/status?token='+encodeURIComponent(token))).json();
+        const names=((sl&&sl.devices)||[]).map(d=>d.name);
+        if(names.length&&(!device||names.indexOf(device)<0)){
+          device=names[0]; $('device').value=device; localStorage.setItem('s20dev',device);
+          logLine('自动选择在线设备：'+device,true);
+        }
+      }
+      if(device){ cfg=await relayCall('config.get'); st=await relayCall('status.get'); }
+    }
+  }catch(e){ logLine('读取手机配置失败：'+e.message+'（可勾选“手动指定”覆盖地址）',false); }
+
+  const proto=(cfg&&cfg.tlsEnabled===false)?'http':'https';
+  const port=(cfg&&cfg.httpPort)||8999;
+  const lanIp=lanIpOf(st);
+  const ddns=(cfg&&cfg.ddnsHost)||'';
+  epInfo.httpPort=port; epInfo.tls=(proto==='https'); epInfo.lanIp=lanIp; epInfo.ddns=ddns;
+  const hereRelay=(location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws';
+  const cfgRelay=(cfg&&cfg.relayUrl)||'';
+  let relay=hereRelay;
+  if(origin==='phone'){
+    relay=cfgRelay||hereRelay;                 // 从手机页面打开：只能用它自己的配置
+  }else{
+    try{ relay=(new URL(cfgRelay).host===location.host)?cfgRelay:hereRelay; }catch(e){ relay=hereRelay; }
+  }
+  epInfo.relay=relay; epInfo.relayCfg=cfgRelay;
+  epInfo.direct=proto+'://'+(ddns||lanIp||location.hostname)+':'+port;
+  if(origin==='phone') epInfo.direct=location.origin;   // 从手机页面打开，直连地址即当前 origin
+  applyEp(mode);
+}
+// 401 统一提示
+function needAuth(r){
+  if(r&&r.status===401){logLine('未授权：token 缺失或错误，请在上方 Token 框重新填写后点“连接”',false);
+    throw new Error('401 未授权');}
+  return r;
+}
+// 从地址栏 ?token= 引导（首次访问），随后抹掉地址栏参数
+document.addEventListener('DOMContentLoaded',()=>{setTimeout(()=>{try{loadCaps()}catch(e){}},1000)});
+
+(function bootToken(){
+  const u=new URL(location.href);
+  const t=u.searchParams.get('token');
+  if(t){localStorage.setItem('s20token',t);u.searchParams.delete('token');
+    history.replaceState(null,'',u.pathname+(u.search||'')+u.hash);}
+})();
+function normEp(){
+  let e=(ep||'').trim().replace(/\/$/,'');
+  if(mode==='relay'){if(!/^wss?:\/\//i.test(e))e='wss://'+e;if(!/\/ws$/.test(e))e+='/ws';}
+  else{if(!/^https?:\/\//i.test(e))e='https://'+e;}
+  ep=e;$('endpoint').value=e;localStorage.setItem('s20ep',e);return e;
+}
+function connect(){saveMode();normEp();if(mode==='relay')connectRelay();else pingDirect()}
+function connectRelay(){
+  try{if(ws)ws.close()}catch(e){}
+  let base=ep.replace(/\/$/,'');
+  ws=new WebSocket(base+(base.includes('?')?'&':'?')+'token='+encodeURIComponent(token)+'&role=controller');
+  ws.onopen=()=>{setDot(true,'中转已连接');logLine('中转服务器已连接',true);setTimeout(loadCaps,300);
+    // 连上后若正停在配置页，刷新一次（首次打开标签页可能早于连接建立）
+    const act=document.querySelector('#tabs button.act');
+    if(act&&act.dataset.t==='config')setTimeout(loadConfig,400);};
+  ws.onclose=()=>{setDot(false,'中转断开');logLine('中转连接断开',false)};
+  ws.onerror=()=>{setDot(false,'中转错误')};
+  ws.onmessage=e=>onWsMsg(e.data);
+}
+function pingDirect(){
+  fetch(ep.replace(/\/$/,'')+'/ping',{headers:{'X-Token':token}}).then(needAuth).then(r=>r.json()).then(()=>{setDot(true,'手机直连OK');logLine('手机直连成功: '+ep,true);cmd('cmd.list',{},r=>{out('statusBox','可用指令:\n'+(r.data.cmds||[]).join('  '))});setTimeout(loadCaps,300)}).catch(()=>{setDot(false,'手机直连失败');logLine('手机直连失败: '+ep,false)});
+}
+function setDot(on,txt){$('dot').innerHTML='<span class="status-dot '+(on?'dot-on':'dot-off')+'"></span><span class="small">'+txt+'</span>';$('connState').textContent=txt}
+function onWsMsg(raw){
+  const m=JSON.parse(raw);
+  if(m.type==='devices')return out('statusBox',m);
+  if(m.type==='cmd_error'){logLine('指令错误: '+m.msg,false);return}
+  if(m.response){
+    const cb=pendings[m.id];if(cb){cb(m.response);delete pendings[m.id]}
+    else out('log',m);
+  }
+}
+let pendings={},seqN=0;
+// ====== 指令发送（双通道统一） ======
+function cmd(c,p,cb){
+  const id='w'+(++seqN)+'_'+Date.now();
+  if(mode==='direct'){
+    return fetch(ep.replace(/\/$/,'')+'/cmd',{method:'POST',headers:{'Content-Type':'application/json; charset=utf-8','X-Token':token},
+      body:JSON.stringify({cmd:c,params:p||{},id})}).then(needAuth).then(r=>r.json()).then(j=>{
+        if(j.code!==0)throw new Error(j.msg);
+        if(j.data&&j.data.errCode)logLine((j.data.feature||c)+' 不可用['+j.data.errCode+']: '+(j.data.hint||''),false);
+        if(cb)cb(j);return j;
+      }).catch(e=>{logLine('指令失败: '+c+' - '+e.message,false);throw e});
+  }else{
+    return new Promise((res,rej)=>{
+      if(!ws||ws.readyState!==1)return rej(new Error('中转未连接'));
+      pendings[id]=j=>{if(j.code!==0)rej(new Error(j.msg));else{if(j.data&&j.data.errCode)logLine((j.data.feature||c)+' 不可用['+j.data.errCode+']: '+(j.data.hint||''),false);res(j)}if(cb)cb(j)};
+      ws.send(JSON.stringify({id,device,cmd:c,params:p||{}}));
+      setTimeout(()=>{if(pendings[id]){delete pendings[id];rej(new Error('超时'))}},30000);
+    });
+  }
+}
+// ====== 能力与权限 ======
+function renderCaps(d){
+  if(!d){ $('capBox').innerHTML='不可用'; return; }
+  const perms=d.perms||{};
+  const names={sms:'发短信',smsRead:'读短信',phone:'电话',location:'定位',notifications:'通知',camera:'相机',mic:'麦克风',bluetooth:'蓝牙'};
+  const pv=Object.keys(names).map(k=>{
+    const g=(perms[k]||{}).granted;
+    return names[k]+' '+(g===true?'✓':(g===false?'✗':'-'));
+  }).join(' · ');
+  const feat=d.features||{};
+  const row=(l,v)=>`<div>${l}：<b style="color:${v==='ok'?'#0F6E56':(v==='degraded'?'#854F0B':'#A32D2D')}">${v==='ok'?'可用':(v==='degraded'?'降级可用':'不可用')}</b></div>`;
+  const sim=d.simulateNoRoot?'<div style="color:#A32D2D">⚠ 模拟无 root 模式</div>':'';
+  $('capBox').innerHTML =
+    sim+
+    `<div>root：${d.root?'✓':'✗'} · 特权安装：${d.privileged?'✓':'✗'} · 厂商：${(d.manufacturer||'')+' '+(d.model||'')}</div>`+
+    `<div>系统：Android ${d.androidVersion} (API ${d.sdkInt}) · 设备管理员：${d.deviceAdmin?'✓':'✗'} · 所有文件访问：${d.manageStorage?'✓':'✗'}</div>`+
+    `<div>${pv}</div><hr style="border:none;border-top:1px solid #eee;margin:4px 0">`+
+    row('热点管理',feat.hotspot)+row('截屏',feat.screenshot)+row('重启',feat.reboot)+
+    row('远程解锁',feat.unlock)+row('熄屏',feat.screenOff)+row('开关设置',feat.switchSet)+
+    row('文件管理',feat.files)+row('应用管理',feat.apps)+row('移动数据开关',feat.dataSet);
+  // 按钮门控：不可用直接置灰并给出原因悬浮
+  const gate=(id,ok,why)=>{const b=$(id);if(!b)return;b.disabled=!ok;b.title=ok?'':'不可用：'+why;};
+  gate('btnScreenOff',feat.screenOff==='ok',feat.screenOff==='ok'?'':'需要 root 或激活设备管理员');
+  gate('btnWakeUp',feat.unlock==='ok','需要 root');
+  gate('btnReboot',feat.reboot==='ok','需要 root');
+}
+function loadCaps(){
+  if(mode==='relay'&&(!ws||ws.readyState!==1)){$('capBox').textContent='中转连接后自动读取';return;}
+  cmd('cap.get',{},r=>{renderCaps(r.data)}).catch(()=>{$('capBox').innerHTML='能力读取失败'});
+}
+
+// ====== 熄屏 / 唤醒 ======
+function screenOff(){
+  logLine('正在熄屏…');
+  cmd('device.screenOff',{}).then(r=>{
+    const d=r.data||{};
+    logLine('熄屏: '+(d.msg||'已下发')+(d.method?(' ['+d.method+']'):''),!!d.ok);
+  }).catch(e=>logLine('熄屏失败: '+e.message+'（设备休眠后可能无回执，可点“唤醒”重试）',false));
+}
+function wakeUp(){
+  logLine('正在唤醒…');
+  cmd('device.wakeUp',{}).then(r=>{
+    const d=r.data||{};
+    let t='唤醒: '+(d.msg||'已下发');
+    if(d.attempts)t+='（尝试 '+d.attempts+' 次）';
+    logLine(t,!!d.ok && d.locked!==true);
+  }).catch(e=>logLine('唤醒失败: '+e.message,false));
+}
+// ====== 开关自动恢复 ======
+function guardCheck(){
+  logLine('正在检查开关…');
+  cmd('guard.check',{}).then(r=>{
+    const d=r.data||{};
+    out('guardOut',d);
+    const acts=d.actions||[], fails=d.failures||[];
+    if(acts.length)acts.forEach(a=>logLine(a,true));
+    else logLine('开关检查完成：无需恢复');
+    fails.forEach(f=>logLine(f,false));
+  }).catch(e=>logLine('开关检查失败: '+e.message,false));
+}
+// ====== 屏幕截图 ======
+let shotB64='';
+function shot(){
+  const max=parseInt($('shotW').value)||720, quality=parseInt($('shotQ').value)||70;
+  const t0=Date.now();
+  $('shotInfo').textContent='截图请求已发送，等待手机回传…';
+  $('shotBox').className='small'; $('shotBox').textContent='截图进行中…';
+  cmd('screen.capture',{max,quality}).then(r=>{
+    const d=r.data||{};
+    if(!d.ok||!d.b64) throw new Error(d.error||'手机未返回图片');
+    shotB64=d.b64;
+    $('shotBox').className='';
+    $('shotBox').innerHTML='<img alt="手机当前屏幕" src="data:'+(d.mime||'image/jpeg')+';base64,'+d.b64+'"'
+      +' style="max-width:100%;border:1px solid var(--bord);border-radius:8px">';
+    // ts 是毫秒；若为秒则换算
+    const tt=new Date((d.ts||Date.now())>1e11?(d.ts||Date.now()):(d.ts||Date.now())*1000);
+    $('shotInfo').innerHTML='原图 '+d.width+'×'+d.height+' → '+d.outWidth+'×'+d.outHeight
+      +' · '+fmtSize(d.bytes||0)+' · 耗时 '+(d.ms!=null?d.ms:(Date.now()-t0))+'ms'
+      +' · '+two(tt.getHours())+':'+two(tt.getMinutes())+':'+two(tt.getSeconds())
+      +(d.wakefulness&&!/Awake/.test(d.wakefulness)?' <span style="color:#a32d2d">· 屏幕 '+esc(d.wakefulness)+'（可能为黑屏）</span>':'');
+    logLine('截图完成：'+d.outWidth+'×'+d.outHeight+' '+fmtSize(d.bytes||0),true);
+  }).catch(e=>{
+    $('shotBox').className='small'; $('shotBox').textContent='截图失败：'+e.message;
+    $('shotInfo').textContent='截图失败：'+e.message;
+    logLine('截图失败: '+e.message,false);
+  });
+}
+function reloadShot(){shot()}
+function saveShot(){
+  if(!shotB64)return logLine('保存图片：请先截图',false);
+  const d=new Date();const n='s20_'+d.getFullYear()+two(d.getMonth()+1)+two(d.getDate())+'_'+two(d.getHours())+two(d.getMinutes())+two(d.getSeconds())+'.jpg';
+  const a=document.createElement('a');
+  a.href='data:image/jpeg;base64,'+shotB64; a.download=n; a.click();
+  logLine('已导出截图 '+n,true);
+}
+// ====== 媒体：拍照 / 录音 ======
+let photoB64='';
+function takePhoto(){
+  const facing=$('camFacing').value, max=parseInt($('photoW').value)||1080, quality=parseInt($('photoQ').value)||80;
+  const t0=Date.now();
+  $('photoInfo').textContent='拍照请求已发送，等待手机回传…';
+  $('photoBox').className='small'; $('photoBox').textContent='拍照进行中…';
+  cmd('media.photo',{facing,max,quality,save:true}).then(r=>{
+    const d=r.data||{};
+    if(d.mode==='cameraApp'){ // 降级：已拉起系统相机 App，需人工拍摄
+      $('photoBox').className='small'; $('photoBox').textContent=d.hint||'已拉起系统相机';
+      $('photoInfo').textContent='降级模式：已拉起系统相机 App';
+      logLine('拍照降级：已拉起系统相机 App（'+(d.hint||'')+'）',true);
+      return;
+    }
+    if(!d.ok||!d.b64) throw new Error(d.error||'手机未返回照片');
+    photoB64=d.b64;
+    $('photoBox').className='';
+    $('photoBox').innerHTML='<img alt="手机拍摄照片" src="data:'+(d.mime||'image/jpeg')+';base64,'+d.b64+'"'
+      +' style="max-width:100%;border:1px solid var(--bord);border-radius:8px">';
+    $('photoInfo').innerHTML=(d.facing==='front'?'前置':'后置')+' 原图 '+d.width+'×'+d.height+' → '+d.outWidth+'×'+d.outHeight
+      +' · '+fmtSize(d.bytes||0)+' · 耗时 '+(d.ms!=null?d.ms:(Date.now()-t0))+'ms'
+      +(d.savedPath?' · 已存 '+esc(d.savedPath):'');
+    logLine('拍照完成：'+(d.facing==='front'?'前置':'后置')+' '+d.outWidth+'×'+d.outHeight+' '+fmtSize(d.bytes||0),true);
+  }).catch(e=>{
+    $('photoBox').className='small'; $('photoBox').textContent='拍照失败：'+e.message;
+    $('photoInfo').textContent='拍照失败：'+e.message;
+    logLine('拍照失败: '+e.message,false);
+  });
+}
+function savePhoto(){
+  if(!photoB64)return logLine('保存图片：请先拍照',false);
+  const d=new Date();const n='s20cam_'+d.getFullYear()+two(d.getMonth()+1)+two(d.getDate())+'_'+two(d.getHours())+two(d.getMinutes())+two(d.getSeconds())+'.jpg';
+  const a=document.createElement('a');
+  a.href='data:image/jpeg;base64,'+photoB64; a.download=n; a.click();
+  logLine('已导出照片 '+n,true);
+}
+let recPollTimer=null;
+function recSetBusy(b){
+  $('recBtn').disabled=b; $('recBtn').textContent=b?'录音中…':'开始录音';
+  $('recStopBtn').style.display=b?'':'none';
+  if(recPollTimer){clearInterval(recPollTimer);recPollTimer=null;}
+}
+function doRecord(){
+  const seconds=Math.min(86400,Math.max(1,parseInt($('recSec').value)||15));
+  $('recSec').value=seconds;
+  $('recInfo').textContent='录音指令下发中…';
+  cmd('media.record',{seconds}).then(r=>{
+    const d=r.data||{};
+    if(!d.ok) throw new Error(d.error||'启动失败');
+    recSetBusy(true);
+    $('recBox').className='small'; $('recBox').textContent='录音进行中…';
+    $('recInfo').textContent='录音进行中（目标 '+d.seconds+' 秒），每 2 秒刷新进度';
+    logLine('录音已开始：目标 '+d.seconds+'s',true);
+    recPollTimer=setInterval(pollRec,2000); pollRec();
+  }).catch(e=>{
+    $('recInfo').textContent='录音启动失败：'+e.message;
+    logLine('录音启动失败: '+e.message,false);
+  });
+}
+function pollRec(){
+  cmd('media.recordStatus',{}).then(r=>{
+    const d=r.data||{};
+    if(d.recording){
+      $('recInfo').textContent='录音中：已录 '+d.elapsedSec+'s / 目标 '+d.targetSec+'s · '+fmtSize(d.bytes||0);
+    }else{
+      recSetBusy(false);
+      const last=d.last;
+      if(last&&last.ok){
+        const path=last.path||last.savedPath||'';
+        $('recBox').className='';
+        $('recBox').innerHTML='最近录音：<b>'+fmtSize(last.bytes||0)+'</b> · '+last.seconds+' 秒'
+          +(path?' · <button data-rp="'+esc(path)+'" onclick="download(this.dataset.rp)">下载</button>':'')
+          +'<div class="small" style="margin-top:4px">'+esc(path||'')+'</div>';
+        $('recInfo').textContent='录音完成：'+last.seconds+' 秒 · '+fmtSize(last.bytes||0)
+          +(last.stopped?'（手动停止）':'')+(path?' · '+path:'');
+        logLine('录音完成：'+last.seconds+'s '+fmtSize(last.bytes||0),true);
+      }else if(last){
+        $('recInfo').textContent='上次录音失败：'+(last.error||'未知');
+      }else{
+        $('recInfo').textContent='当前无录音任务';
+      }
+    }
+  }).catch(e=>{$('recInfo').textContent='状态查询失败：'+e.message;});
+}
+function doRecordStop(){
+  $('recStopBtn').disabled=true;
+  cmd('media.recordStop',{}).then(r=>{
+    $('recStopBtn').disabled=false;
+    const d=r.data||{};
+    if(!d.ok&&!d.recording) throw new Error(d.error||'停止失败');
+    $('recInfo').textContent='停止指令已下发，等待录音收尾…';
+    setTimeout(pollRec,800);
+  }).catch(e=>{
+    $('recStopBtn').disabled=false;
+    $('recInfo').textContent='停止失败：'+e.message;
+  });
+}
+// ====== 最近一次上报 ======
+function two(n){return ('0'+n).slice(-2)}function fmtAge(sec){
+  if(sec<0)sec=0;
+  if(sec<60)return Math.round(sec)+' 秒前';
+  if(sec<3600)return Math.round(sec/60)+' 分钟前';
+  if(sec<86400)return (sec/3600).toFixed(1)+' 小时前';
+  return Math.round(sec/86400)+' 天前';
+}
+function renderLastPush(ts,age,d,src,extra){
+  if(!d||!$('lastPush'))return;
+  const b=d.battery||{},st=d.storage||{};
+  const t=ts?new Date(ts>1e11?ts:ts*1000):null;   // 上报时间可能是毫秒或秒
+  const hh=t?(two(t.getHours())+':'+two(t.getMinutes())+':'+two(t.getSeconds())):'--:--:--';
+  const ab=(extra&&extra.abnormal)||d.abnormal;
+  const rs=(d.reasons||[]).map(esc).join('；');
+  const stale=(extra&&extra.lastSeen)?((Date.now()/1000-extra.lastSeen)>120):false;
+  let s='最近'+(src==='live'?'状态（实时）':'上报')+'：<b>'+hh+'</b>'
+    +(age!=null?('（'+fmtAge(age)+'）'):'')
+    +' · 电量 '+(b.level>=0?b.level+'%':'?')
+    +' · 存储 '+(st.freeGb!=null?st.freeGb+'GB':'?')
+    +' · '+(ab?'<span style="color:#a32d2d">异常'+(rs?'（'+rs+'）':'')+'</span>':'正常');
+  if(stale)s+=' <span style="color:#a32d2d">· 超过 2 分钟无新上报，设备可能离线</span>';
+  $('lastPush').innerHTML=s;
+}
+async function loadLastPush(){
+  if(!token||!$('lastPush'))return;
+  try{
+    if(mode==='relay'&&epInfo.origin!=='phone'){
+      const r=await fetch('/api/device/state?device='+encodeURIComponent(device)+'&limit=1&token='+encodeURIComponent(token),{cache:'no-store'});
+      if(r.status===404){$('lastPush').textContent='最近上报：该设备暂无上报记录';return;}
+      if(r.status===401){$('lastPush').textContent='最近上报：未授权（token 缺失或错误）';return;}
+      const j=await r.json();
+      const ts=j.ts||j.lastSeen;
+      const age=ts?((Date.now()-(ts>1e11?ts:ts*1000))/1000):null;   // 距该条上报多久
+      renderLastPush(ts,age,j.status||{},'relay',j);
+    }else{
+      const d=await directCall('status.get');
+      renderLastPush(Date.now()/1000,0,d,'live',null);
+    }
+  }catch(e){
+    $('lastPush').textContent='最近上报：读取失败 - '+e.message;
+  }
+}
+// ====== 状态 ======
+function refreshAll(){
+  loadCaps();
+  cmd('status.get',{},r=>{showStatus(r.data);logLine('刷新状态: '+statusBrief(r.data))});
+  refreshSw();
+  loadLastPush();
+}
+function statusBrief(d){
+  const b=d.battery||{},n=d.network||{};
+  const st=d.storage||{};
+  return '电量'+b.level+'% '+(b.charging?'充电':'放电')+' · '+(n.wifi?'WiFi':(n.cellular?'移动数据':'离线'))
+    +(st.freeGb!=null?(' · 存储 '+st.freeGb+'GB'+(st.low?'(低)':'')):'');
+}
+function rebootDev(){
+  if(confirm('确认重启手机？重启后开机脚本将自动解锁并恢复服务'))cmd('device.reboot',{})
+    .then(r=>logLine('重启指令已发送，手机将重启（约2分钟后服务自动恢复）✓',true))
+    .catch(e=>logLine('重启指令失败: '+e.message,false));
+}
+// ====== 固定参数开关 ======
+const SW_ITEMS=[['wifi','WiFi'],['hotspot','热点'],['data','数据'],['bluetooth','蓝牙'],['location','定位']];
+const SW_CMD={wifi:'wifi.set',hotspot:'hotspot.set',data:'data.set',bluetooth:'bluetooth.set',location:'location.set'};
+function swText(d){return SW_ITEMS.map(([k,l])=>l+(d[k]?'开':'关')).join(' ')}
+function refreshSw(){
+  cmd('switch.get',{}).then(r=>{renderSw(r.data);logLine('开关状态: '+swText(r.data))})
+    .catch(e=>{logLine('开关状态查询失败: '+e.message,false);renderSw(null)});
+}
+function renderSw(d){
+  let h='';
+  SW_ITEMS.forEach(([k,label])=>{
+    const on=d?!!d[k]:null;
+    const dot=on===null?'background:#999':(on?'dot-on':'dot-off');
+    h+='<span class="swItem"><span class="status-dot" style="'+dot+'"></span>'+label+' <b>'+(on===null?'?':(on?'开':'关'))+'</b>'
+      +' <button onclick="toggleSw(\''+k+'\',true)">开</button>'
+      +' <button onclick="toggleSw(\''+k+'\',false)">关</button></span>';
+  });
+  $('swRow').innerHTML=h;
+}
+function toggleSw(k,on){
+  cmd(SW_CMD[k],{on}).then(r=>{
+    const ok=r.data.ok!==false;
+    let t=SW_ITEMS.find(x=>x[0]===k)[1]+(on?' → 开':' → 关')+(ok?' ✓':' ✗');
+    if(!ok&&r.data.error)t+=': '+r.data.error;
+    if(k==='hotspot'&&r.data.detail&&!ok)t+=' '+String(r.data.detail).slice(0,120);
+    logLine(t,ok);
+    if(ok)setTimeout(refreshSw, k==='bluetooth'?6000:2000);   // 蓝牙启用较慢，延迟回读
+    else refreshSw();
+  }).catch(e=>{logLine(SW_ITEMS.find(x=>x[0]===k)[1]+'开关失败: '+e.message,false)});
+}
+function isPrivateIp(ip){
+  return /^10\./.test(ip)||/^192\.168\./.test(ip)||/^169\.254\./.test(ip)
+    ||/^127\./.test(ip)||/^172\.(1[6-9]|2\d|3[0-1])\./.test(ip);
+}
+function showStatus(d){
+  let h='';
+  const dev=d.device||{},bat=d.battery||{},net=d.network||{};
+  h+='<div><b>型号</b>'+dev.model+'（Android '+dev.androidVersion+'）</div>';
+  h+='<div><b>系统</b>'+(dev.uptime||'')+'</div>';
+  h+='<div><b>电量</b>'+bat.level+'% '+(bat.charging?'充电中':'放电')+' 温度 '+(bat.temperature??'-')+'℃</div>';
+  h+='<div><b>CPU温度</b>'+(typeof d.cpuTemp==='number'&&d.cpuTemp>=0?d.cpuTemp.toFixed(1)+'℃':'未知')+'</div>';
+  const st=d.storage||{};
+  if(st.freeGb!=null){
+    const warn=st.low?(' <span style="color:#a32d2d">可用不足 '+st.warnGb+'GB</span>'):'';
+    h+='<div><b>存储</b>'+st.freeGb+' GB 可用 / '+st.totalGb+' GB（已用 '+st.usedPct+'%）'+warn+'</div>';
+  }else{h+='<div><b>存储</b>未知</div>';}
+  h+='<div><b>网络</b>'+(net.wifi?'WiFi':(net.cellular?'移动数据':'离线'))+' (↓'+net.downMbps+'Mb ↑'+net.upMbps+'Mb)'+(net.airplane?' 飞行模式':'')+'</div>';
+  (d.ips||[]).forEach(i=>{
+    (i.v4||[]).forEach(x=>h+='<div><b>IPv4</b>['+x.iface+'] '+x.addr+'</div>');
+    (i.v6||[]).forEach(x=>h+='<div><b>IPv6</b>['+x.iface+'] '+x.addr+'</div>');
+  });
+  $('statusBox').innerHTML=h;
+  // 本地 IPv4 全为局域网地址时，补充显示公网 IPv4（手机侧外部探测）
+  const v4=[].concat(...(d.ips||[]).map(i=>i.v4||[]));
+  if(v4.length && !v4.some(x=>!isPrivateIp(x.addr))){
+    const row=document.createElement('div');
+    row.innerHTML='<b>公网IPv4</b><span id="pubIp">查询中…</span>';
+    $('statusBox').appendChild(row);
+    cmd('net.publicIp',{}).then(r=>{
+      const el=$('pubIp');
+      if(el)el.textContent=(r.data.ipv4||'获取失败')+'（本地为局域网地址）';
+      logLine('公网IPv4: '+(r.data.ipv4||'获取失败'));
+    }).catch(()=>{const el=$('pubIp');if(el)el.textContent='获取失败'});
+  }
+}
+// ====== 热点 ======
+function hotspot(on){cmd('hotspot.set',{on}).then(r=>{logLine('热点'+(on?'开启':'关闭')+(r.data.ok?' ✓':' ✗: '+String(r.data.detail||'').slice(0,120)),r.data.ok);out('hsOut',r.data)}).catch(()=>{})}
+function showHotspot(){
+  cmd('hotspot.get',{}).then(r=>{
+    const d=r.data;
+    let h='状态: '+(d.apState||'?')+'\n';
+    h+='SSID: '+(d.currentSsid||'-')+'\n';
+    h+='密码: '+(d.password||'-')+'\n';
+    if(d.band)h+='频段: '+d.band+(d.channels?' (channels '+d.channels+')':'')+'\n';
+    const cls=d.clients||[];
+    if(cls.length){
+      h+='连接客户端 ('+cls.length+'):\n';
+      cls.forEach(c=>{h+='  '+c.ip+'   '+c.mac+'\n'});
+    }else{
+      h+='连接客户端: 无\n';
+    }
+    h+='\n--- 原始数据 ---\n'+d.raw;
+    $('hsOut').textContent=h;
+    logLine('查询热点: '+(d.apState||'?')+' SSID='+(d.currentSsid||'-')+' 客户端'+cls.length+'个');
+  }).catch(()=>{});
+}
+function hotspotWithCfg(on){
+  const p={on};
+  if($('hsSsid').value)p.ssid=$('hsSsid').value;
+  if($('hsPass').value)p.pass=$('hsPass').value;
+  if($('hsBand').value)p.band=$('hsBand').value;
+  cmd('hotspot.set',p).then(r=>{logLine('按配置'+(on?'开启':'关闭')+'热点'+(r.data.ok?' ✓':' ✗: '+String(r.data.detail||'').slice(0,120)),r.data.ok);out('hsCfgOut',r.data)}).catch(()=>{});
+}
+// ====== 短信 ======
+let smsIds=new Set();
+const RANGE_LABEL={all:'全部',today:'当天',week:'本周',lastweek:'上周',month:'本月'};
+function rangeTs(rg){
+  const mid=x=>{x.setHours(0,0,0,0);return x.getTime()};
+  if(rg==='today')return{start:mid(new Date())};
+  if(rg==='week'){const d=new Date();d.setDate(d.getDate()-((d.getDay()+6)%7));return{start:mid(d)}}
+  if(rg==='lastweek'){const d=new Date();d.setDate(d.getDate()-((d.getDay()+6)%7));const end=mid(d);d.setDate(d.getDate()-7);return{start:mid(d),end:end}}
+  if(rg==='month'){const d=new Date();d.setDate(1);return{start:mid(d)}}
+  return{};
+}
+function loadSms(){
+  const p={limit:parseInt($('smsLimit').value)};
+  if($('smsAddr').value)p.address=$('smsAddr').value;
+  if($('smsKw').value)p.keyword=$('smsKw').value;
+  const rg=$('smsRange').value,ts=rangeTs(rg);
+  if(ts.start)p.startTs=ts.start;
+  if(ts.end)p.endTs=ts.end;
+  cmd('sms.list',p).then(r=>{
+    smsIds=new Set();let h='<table><tr><th></th><th>时间</th><th>号码</th><th>收/发</th><th>内容</th><th>操作</th></tr>';
+    r.data.messages.forEach(m=>{
+      const t=new Date(m.date).toLocaleString();
+      h+='<tr><td><input type="checkbox" onchange="this.checked?smsIds.add('+m.id+'):smsIds.delete('+m.id+')"></td>'
+        +'<td>'+t+'</td><td>'+m.address+'</td><td>'+(m.type===1?'收':'发')+'</td>'
+        +'<td>'+esc(m.body)+'</td><td><button onclick="cmd(\'sms.delete\',{ids:['+m.id+']}).then(loadSms)">删</button></td></tr>';
+    });
+    h+='</table>';
+    $('smsBox').innerHTML=r.data.count?h:'无记录';
+    logLine('查询短信['+(RANGE_LABEL[rg]||rg)+']: '+r.data.count+' 条'+(r.data.source?' ('+r.data.source+')':''));
+  }).catch(()=>{});
+}
+function esc(s){return (s||'').replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}
+function sendSms(){
+  if(!$('smsTo').value||!$('smsText').value)return logLine('发送短信: 请填写号码和内容',false);
+  cmd('sms.send',{address:$('smsTo').value,text:$('smsText').value}).then(r=>{logLine('发送短信 → '+$('smsTo').value+' ✓',true);$('smsText').value=''});
+}
+function delChecked(){
+  if(!smsIds.size)return logLine('删除短信: 未选择',false);
+  cmd('sms.delete',{ids:[...smsIds]}).then(r=>{logLine('删除短信 '+r.data.deleted+' 条 ✓',true);loadSms()});
+}
+function delAll(){if(confirm('确认清空全部短信？'))cmd('sms.delete',{all:true,force:true}).then(r=>{logLine('清空短信 '+r.data.deleted+' 条 ✓',true);loadSms()})}
+// ====== 应用 ======
+function loadApps(){
+  cmd('app.list',{keyword:$('appKw').value,system:$('appSys').checked}).then(r=>{
+    let h='<table><tr><th>#</th><th>应用</th><th>包名</th><th>版本</th><th>操作</th></tr>';
+    r.data.apps.forEach((a,i)=>{
+      h+='<tr><td class="small">'+(i+1)+'</td><td>'+esc(a.label)+'</td><td class="small">'+a.pkg+'</td><td>'+a.versionName+'</td>'
+        +'<td><button data-start="'+i+'">启</button> '
+        +'<button data-stop="'+i+'">停</button> '
+        +'<button data-unins="'+i+'">卸载</button></td></tr>';
+    });
+    $('appBox').innerHTML=h||'无';
+    $('appBox')._apps=r.data.apps;
+    // 事件委托：包名从缓存取，避免引号/特殊字符破坏内联 onclick
+    $('appBox').onclick=e=>{
+      const b=e.target.closest('button');if(!b)return;
+      const list=$('appBox')._apps||[];const a=list[+(b.dataset.start||b.dataset.stop||b.dataset.unins)];
+      if(!a)return;
+      if(b.dataset.start!==undefined)startApp(a.pkg);
+      else if(b.dataset.stop!==undefined)stopApp(a.pkg);
+      else delApp(a.pkg);
+    };
+    logLine('查询应用: 共 '+r.data.count+' 个');
+  });
+}
+function startApp(pkg){
+  cmd('app.start',{pkg}).then(r=>{
+    const d=r.data||{};
+    logLine('启动 '+pkg+': '+(d.ok?'成功':'失败')+(d.method?' ['+d.method+']':'')+' '+(d.output||''),!!d.ok);
+    if(!d.ok)logLine('  ↳ '+(d.hint||'未知原因'),false);
+  }).catch(e=>logLine('启动 '+pkg+' 失败: '+e.message,false));
+}
+function stopApp(pkg){
+  cmd('app.stop',{pkg}).then(r=>{
+    const d=r.data||{};
+    logLine('停止 '+pkg+': '+(d.ok?'成功':'失败')+' '+(d.output||''),!!d.ok);
+    if(!d.ok)logLine('  ↳ '+(d.hint||d.errCode||'未知原因'),false);
+  }).catch(e=>logLine('停止 '+pkg+' 失败: '+e.message,false));
+}
+function delApp(pkg){if(confirm('卸载 '+pkg+' ?'))cmd('app.uninstall',{pkg}).then(r=>{logLine('卸载 '+pkg+': '+r.data.output,r.data.output&&r.data.output.includes('Success'));loadApps()})}
+function uploadApk(input){
+  const f=input.files[0];if(!f)return;
+  $('apkUp').textContent='上传中 '+f.name+' ('+(f.size/1048576).toFixed(1)+'MB)...';
+  const dst='/sdcard/Download/'+f.name;
+  fetch(ep.replace(/\/$/,'')+'/file?path='+encodeURIComponent(dst)+'&token='+encodeURIComponent(token),
+    {method:'POST',body:f}).then(r=>r.json()).then(j=>{
+      if(j.code!==0)throw new Error(j.msg);
+      $('apkUp').textContent='已上传，安装中...';
+      return cmd('app.install',{path:dst});
+    }).then(r=>{logLine('安装 '+f.name+': '+(r.data.ok?'成功':'失败')+' '+r.data.output,r.data.ok);$('apkUp').textContent=''}).catch(e=>{logLine('安装失败: '+e.message,false);$('apkUp').textContent=''});
+}
+// ====== 文件 ======
+function listFiles(){
+  cmd('file.list',{path:$('fPath').value}).then(r=>{
+    let h='<table><tr><th>名称</th><th>大小</th><th>操作</th></tr>';
+    if($('fPath').value.replace(/\/+$/,'')!==''){
+      h+='<tr><td colspan=3><button onclick="goUp()">.. 上级</button></td></tr>';
+    }
+    r.data.entries.forEach((e,i)=>{
+      const p=e.path;
+      // 用 data-index 绑定，避免路径中的引号/特殊字符破坏 onclick 字符串
+      h+='<tr><td>'+(e.dir?'📁 ':'📄 ')+(e.dir?'<a href="javascript:void(0)" data-enter="'+i+'">'+esc(e.name)+'</a>':esc(e.name))+'</td>'
+        +'<td>'+(e.dir?'-':fmtSize(e.size))+'</td>'
+        +'<td>'+(e.dir?'':'<button data-dl="'+i+'">下载</button> ')+'<button data-del="'+i+'">删除</button></td></tr>';
+    });
+    $('fileBox')._entries=r.data.entries;
+    $('fileBox').innerHTML=h||'空目录';
+    // 事件委托：目录进入 / 下载 / 删除，路径用索引从缓存取，彻底规避转义与相对路径问题
+    const entries=r.data.entries;
+    $('fileBox').querySelectorAll('[data-enter]').forEach(a=>a.onclick=()=>{
+      $('fPath').value=entries[+a.dataset.enter].path; listFiles();
+    });
+    $('fileBox').querySelectorAll('[data-dl]').forEach(b=>b.onclick=()=>download(entries[+b.dataset.dl].path));
+    $('fileBox').querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>{
+      const en=entries[+b.dataset.del]; if(confirm('删除 '+en.path+' ?'))cmd('file.delete',{path:en.path,recursive:en.dir}).then(()=>listFiles());
+    });
+    logLine('浏览目录 '+$('fPath').value+': '+r.data.entries.length+' 项');
+  }).catch(()=>{});
+}
+function goUp(){const p=$('fPath').value.replace(/\/+$/,'');$('fPath').value=p.substring(0,p.lastIndexOf('/')+1)||'/';listFiles()}
+function fmtSize(n){return n>1048576?(n/1048576).toFixed(1)+'MB':n>1024?(n/1024).toFixed(1)+'KB':n+'B'}
+function download(p){window.open(ep.replace(/\/$/,'')+'/file?path='+encodeURIComponent(p)+'&token='+encodeURIComponent(token))}
+function delFile(p,dir){if(confirm('删除 '+p+' ?'))cmd('file.delete',{path:p,recursive:dir}).then(()=>listFiles())}
+function newFolder(){const n=prompt('文件夹名');if(!n)return;cmd('file.mkdir',{path:$('fPath').value.replace(/\/+$/,'')+'/'+n}).then(()=>listFiles())}
+function uploadFile(input){
+  const f=input.files[0];if(!f)return;
+  const dst=$('fPath').value.replace(/\/+$/,'')+'/'+f.name;
+  $('fUp').textContent='上传中 '+f.name+'...';
+  fetch(ep.replace(/\/$/,'')+'/file?path='+encodeURIComponent(dst)+'&token='+encodeURIComponent(token),
+    {method:'POST',body:f}).then(r=>r.json()).then(j=>{if(j.code!==0)throw new Error(j.msg);logLine('已上传 '+dst,true);$('fUp').textContent='';listFiles()})
+    .catch(e=>{logLine('上传失败: '+e.message,false);$('fUp').textContent=''});
+}
+// ====== 配置/日志 ======
+function loadConfig(){cmd('config.get',{}).then(r=>{
+  const c=r.data;
+  $('cfgRelay').value=c.relayUrl||'';
+  $('cfgDevName').value=c.deviceName||'';
+  $('cfgDdnsProvider').value=c.ddnsProvider||'dnsexit';
+  $('cfgDdnsUser').value=c.ddnsUser||'';
+  $('cfgDdnsHost').value=c.ddnsHost||'';
+  $('cfgDdnsIpType').value=c.ddnsIpType||'ipv6';
+  $('cfgDdnsMin').value=c.ddnsIntervalMin||360;
+  $('cfgDdnsPass').value='';
+  $('cfgDdnsPass').placeholder=c.ddnsPassSet?'（已设置，留空不修改）':'密码 / API Key';
+  $('logFileSw').checked=!!c.logEnabled;
+  $('logPathHint').textContent='路径: '+(c.logFile||'');
+  $('cfgHeartbeat').value=c.heartbeatSec||60;
+  $('cfgBatWarn').value=c.batteryWarnPct??65;
+  $('cfgTempWarn').value=c.tempWarnC??40;
+  $('cfgCpuWarn').value=c.cpuWarnC??60;
+  $('cfgStorageWarn').value=c.storageWarnGb??10;
+  $('cfgUnlockEnabled').value=c.unlockEnabled?'1':'0';
+  $('cfgUnlockPin').value='';
+  $('cfgUnlockPin').placeholder=c.unlockPinSet?'（已设置，留空不修改）':'未设置（默认 000000）';
+  $('cfgArWifi').value=c.autoRestoreWifi?'1':'0';
+  $('cfgArData').value=c.autoRestoreData?'1':'0';
+  $('cfgArBt').value=c.autoRestoreBluetooth?'1':'0';
+  $('cfgArLoc').value=c.autoRestoreLocation?'1':'0';
+  $('cfgArHotspot').value=c.autoRestoreHotspot?'1':'0';
+  $('cfgGuardSec').value=c.guardSec||300;
+  $('cfgTlsEnabled').value=c.tlsEnabled?'1':'0';
+  $('cfgRelayInsecure').value=c.relayInsecureTls?'1':'0';
+  $('cfgTrafficEnabled').value=c.trafficEnabled?'1':'0';
+  $('cfgTrafficMode').value=c.trafficQueryMode||'sms';
+  $('cfgTrafficNumber').value=c.trafficQueryNumber||'10086';
+  $('cfgTrafficCmd').value=c.trafficQueryCmd||'CXLL';
+  $('cfgTrafficLocalCmd').value=c.trafficLocalCmd||'';
+  $('cfgTrafficWarnMb').value=c.trafficWarnMb||3000;
+  $('cfgTrafficAlertNumber').value=c.trafficAlertNumber||'';
+  $('cfgTrafficCheckMin').value=c.trafficCheckMin||1440;
+  $('cfgTrafficInfo').textContent='最近已用流量: '+(c.trafficUsedMb>=0?c.trafficUsedMb+' MB':'未知')
+    +' · 上次告警日: '+(c.trafficAlertDay||'无');
+  out('cfgOut',r.data);
+  logLine('读取配置完成');
+})}
+function saveConfig(){
+  const p={
+    relayUrl:$('cfgRelay').value,
+    deviceName:$('cfgDevName').value,
+    ddnsProvider:$('cfgDdnsProvider').value,
+    ddnsUser:$('cfgDdnsUser').value,
+    ddnsHost:$('cfgDdnsHost').value,
+    ddnsIpType:$('cfgDdnsIpType').value,
+    ddnsIntervalMin:parseInt($('cfgDdnsMin').value)||360,
+    heartbeatSec:parseInt($('cfgHeartbeat').value)||60,
+    batteryWarnPct:parseInt($('cfgBatWarn').value)||65,
+    tempWarnC:parseInt($('cfgTempWarn').value)||40,
+    cpuWarnC:parseInt($('cfgCpuWarn').value)||60,
+    storageWarnGb:parseInt($('cfgStorageWarn').value)||10,
+    unlockEnabled:$('cfgUnlockEnabled').value==='1',
+    autoRestoreWifi:$('cfgArWifi').value==='1',
+    autoRestoreData:$('cfgArData').value==='1',
+    autoRestoreBluetooth:$('cfgArBt').value==='1',
+    autoRestoreLocation:$('cfgArLoc').value==='1',
+    autoRestoreHotspot:$('cfgArHotspot').value==='1',
+    guardSec:parseInt($('cfgGuardSec').value)||300,
+    tlsEnabled:$('cfgTlsEnabled').value==='1',
+    relayInsecureTls:$('cfgRelayInsecure').value==='1',
+    trafficEnabled:$('cfgTrafficEnabled').value==='1',
+    trafficQueryMode:$('cfgTrafficMode').value,
+    trafficQueryNumber:$('cfgTrafficNumber').value.trim(),
+    trafficQueryCmd:$('cfgTrafficCmd').value,
+    trafficLocalCmd:$('cfgTrafficLocalCmd').value,
+    trafficWarnMb:parseInt($('cfgTrafficWarnMb').value)||3000,
+    trafficAlertNumber:$('cfgTrafficAlertNumber').value.trim(),
+    trafficCheckMin:parseInt($('cfgTrafficCheckMin').value)||1440,
+    logEnabled:$('logFileSw').checked
+  };
+  if($('cfgDdnsPass').value)p.ddnsPass=$('cfgDdnsPass').value;
+  const up=$('cfgUnlockPin').value.trim(); if(up)p.unlockPin=up;
+  cmd('config.set',p).then(r=>{
+    logLine('保存配置'+(r.data.needRestart?'（需重启服务生效）':''),true);
+    if(r.data.pinSync){
+      const ps=r.data.pinSync;
+      logLine('PIN 同步到开机脚本: '+(ps.ok?'成功 ✓':('失败 - '+(ps.error||JSON.stringify(ps.failed)))),!!ps.ok);
+    }
+    out('cfgOut',r.data);
+    $('cfgDdnsPass').value='';
+    $('cfgUnlockPin').value='';
+  });
+}
+// ====== 证书 ======
+function loadCert(){
+  cmd('cert.info',{}).then(r=>{out('certOut',r.data);
+    logLine('证书：'+(r.data.selfSigned?'自签':'正式')+' · 有效期至 '+(r.data.notAfter||'?')+' · 指纹 '+(r.data.sha256||'').slice(0,23)+'…');
+  }).catch(e=>logLine('读取证书失败: '+e.message,false));
+}
+function regenCert(){
+  if(!confirm('重新生成自签证书？生成后需要用新证书重新信任，旧信任失效。'))return;
+  cmd('cert.regen',{}).then(r=>{out('certOut',r.data);
+    logLine('新证书已生成，需重启服务生效（指纹 '+(r.data.sha256||'').slice(0,23)+'…）',true);
+  }).catch(e=>logLine('生成证书失败: '+e.message,false));
+}
+function openCertPem(){
+  window.open(ep.replace(/\/$/,'')+'/cert');
+  logLine('已请求证书 PEM（直连模式有效）');
+}
+function renderLog(lines,info){$('log').textContent=(lines||[]).join('\n')||'(空)';if(info)$('logInfo').textContent=info}
+function loadLog(){cmd('log.get',{lines:300}).then(r=>{renderLog(r.data.lines,'内存日志 '+(r.data.lines||[]).length+' 行 · 磁盘 '+fmtSize(r.data.diskSize||0)+(r.data.enabled?' · 落盘开启':' · 落盘关闭'));logLine('拉取内存日志: '+(r.data.lines||[]).length+' 行')})}
+function loadDiskLog(){cmd('log.get',{disk:true}).then(r=>{renderLog(r.data.diskLines,'磁盘日志 '+fmtSize(r.data.diskSize||0)+' · 路径 '+r.data.file);logLine('拉取磁盘日志: '+fmtSize(r.data.diskSize||0)+' ('+(r.data.diskLines||[]).length+' 行)')})}
+function clearLog(){if(confirm('确认清空内存日志和磁盘日志文件？'))cmd('log.clear',{}).then(r=>{logLine('日志已清空',true);$('log').textContent='';loadLog()})}
+function downloadLog(){
+  cmd('config.get',{}).then(r=>{
+    const path=r.data.logFile||'/sdcard/logs/s20remote.log';
+    window.open(ep.replace(/\/$/,'')+'/file?path='+encodeURIComponent(path)+'&token='+encodeURIComponent(token));
+    logLine('开始下载日志: '+path,true);
+  });
+}
+// ====== tabs ======
+document.getElementById('tabs').addEventListener('click',e=>{
+  if(e.target.tagName!=='BUTTON')return;
+  document.querySelectorAll('#tabs button').forEach(b=>b.classList.toggle('act',b===e.target));
+  ['status','hotspot','sms','apps','files','screen','media','config','log'].forEach(t=>{$('tab-'+t).style.display=(t===e.target.dataset.t?'':'none')});
+  if(e.target.dataset.t==='config')loadConfig();
+  if(e.target.dataset.t==='log')loadLog();
+});
+/** 支持 ?tab=config|log|sms… 直达标签页 */
+function openTab(name){
+  const b=document.querySelector('#tabs button[data-t="'+name+'"]');
+  if(b)b.click();
+}
+// init
+(async function initPage(){
+  token=localStorage.getItem('s20token')||'';
+  device=localStorage.getItem('s20dev')||'s20';
+  epAuto=localStorage.getItem('s20epauto')!=='0';
+  $('epManual').checked=!epAuto;
+  $('endpoint').readOnly=epAuto;
+  $('token').value=token;
+  $('device').value=device;
+
+  const urlMode=new URL(location.href).searchParams.get('mode');
+  if(urlMode==='direct'||urlMode==='relay'){
+    mode=urlMode; localStorage.setItem('s20mode',mode);
+  }else{
+    mode=localStorage.getItem('s20mode')||'';
+  }
+  if(!mode){                                   // 首次访问：按页面来源自动选模式
+    mode=(await detectOrigin()==='relay')?'relay':'direct';
+    localStorage.setItem('s20mode',mode);
+  }
+  $('mode').value=mode;
+
+  $('endpoint').value=localStorage.getItem('s20ep')||'';
+  ep=$('endpoint').value;
+  if(ep) normEp();
+
+  if(!token)logLine('未设置访问令牌：请在 Token 框填入手机 token 或中转 RELAY_TOKEN',false);
+  await resolveEndpoints();                     // 读手机配置，自动填地址
+  saveMode();
+  if(mode==='relay')connect();
+  loadLastPush();                               // 最近一次上报
+  setInterval(loadLastPush,30000);              // 30s 轮询
+  const tp=new URLSearchParams(location.search).get('tab');
+  if(tp)setTimeout(()=>openTab(tp),300);         // ?tab=config 直达
+})();
+</script>
+</body>
+</html>

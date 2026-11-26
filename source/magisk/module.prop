@@ -1,0 +1,6 @@
+id=s20remote
+name=S20 Remote Control priv-app
+version=v1.0
+versionCode=1
+author=s20
+description=Install S20Remote as system priv-app to grant TETHER_PRIVILEGED for hotspot control. Data preserved (same signature).

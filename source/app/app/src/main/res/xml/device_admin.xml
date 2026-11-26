@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<device-admin xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-policies>
+        <!-- 仅申请远程锁屏：无 root 时的熄屏兜底 -->
+        <force-lock />
+    </uses-policies>
+</device-admin>

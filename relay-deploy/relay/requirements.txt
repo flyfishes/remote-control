@@ -1,0 +1,3 @@
+aiohttp>=3.9,<4
+# MySQL 8 模式才需要（SQLite 默认模式无需安装）：pip install PyMySQL
+# PyMySQL>=1.1,<2

@@ -1,0 +1,58 @@
+# S20 远程控制 - 中转服务器 systemd 单元
+#
+# 安装：
+#   sudo cp relay/s20relay.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now s20relay
+#   journalctl -u s20relay -f
+#
+# 前置：
+#   目录 /opt/s20relay 内有 relay_server.py + relay/{store.py,web/index.html}
+#   虚拟环境 /opt/s20relay/venv 已装 aiohttp
+#   用户 s20relay 对 /var/lib/s20relay 有写权限（SQLite 落地处）
+
+[Unit]
+Description=S20 Remote Relay (WebSocket + Web console)
+Documentation=file:/opt/s20relay/relay/nginx-s20.conf
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=s20relay
+Group=s20relay
+WorkingDirectory=/opt/s20relay
+
+# ===== 必改：token 必须与手机端 Config.token 完全一致 =====
+Environment=RELAY_TOKEN=CHANGE_ME_TO_SAME_AS_PHONE
+# 交给 nginx 反代时只监听本机；若直接对外（内置 TLS）改成 0.0.0.0
+Environment=RELAY_HOST=127.0.0.1
+Environment=RELAY_PORT=9000
+Environment=RELAY_DB=/var/lib/s20relay/s20relay.db
+# MySQL 8 模式：取消上面 RELAY_DB 注释改为下面几行，并 pip install PyMySQL
+#Environment=RELAY_DB_BACKEND=mysql
+#Environment=RELAY_DB_HOST=127.0.0.1
+#Environment=RELAY_DB_PORT=3306
+#Environment=RELAY_DB_USER=s20relay
+#Environment=RELAY_DB_PASS=CHANGE_ME
+#Environment=RELAY_DB_NAME=s20relay
+# 内置 TLS 时取消注释（nginx 反代时保持注释）
+#Environment=RELAY_SSL_CERT=/etc/letsencrypt/live/s20.example.com/fullchain.pem
+#Environment=RELAY_SSL_KEY=/etc/letsencrypt/live/s20.example.com/privkey.pem
+Environment=PYTHONUNBUFFERED=1
+
+ExecStart=/opt/s20relay/venv/bin/python /opt/s20relay/relay_server.py
+Restart=always
+RestartSec=3
+KillSignal=SIGINT
+TimeoutStopSec=10
+
+# 收紧权限
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/s20relay
+
+[Install]
+WantedBy=multi-user.target
