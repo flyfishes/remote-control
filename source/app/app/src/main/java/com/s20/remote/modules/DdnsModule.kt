@@ -12,6 +12,11 @@ import java.net.NetworkInterface
 import java.net.URL
 import java.net.URLDecoder
 import java.net.URLEncoder
+import javax.net.ssl.HostnameVerifier
+import javax.net.ssl.HttpsURLConnection
+import javax.net.ssl.SSLContext
+import javax.net.ssl.X509TrustManager
+import java.security.cert.X509Certificate
 
 /**
  * DNSExit DDNS 更新。
@@ -72,16 +77,9 @@ object DdnsModule {
     /** 外部服务检测公网出口 IPv4（CGNAT 场景本地接口拿不到公网地址） */
     fun detectPublicIpv4(): String? {
         for (svc in listOf("https://api-ipv4.ip.sb/ip", "https://api.ipify.org")) {
-            try {
-                val conn = URL(svc).openConnection() as HttpURLConnection
-                conn.connectTimeout = 8000; conn.readTimeout = 8000
-                conn.requestMethod = "GET"
-                val ip = conn.inputStream.bufferedReader().use { it.readText() }.trim()
-                conn.disconnect()
-                if (Regex("^\\d{1,3}(\\.\\d{1,3}){3}$").matches(ip)) return ip
-            } catch (e: Exception) {
-                Logger.w(TAG, "publicIpv4 via $svc failed: ${e.message}")
-            }
+            val (body, status) = httpGet(svc)
+            val ip = body.trim()
+            if (status > 0 && Regex("^\\d{1,3}(\\.\\d{1,3}){3}$").matches(ip)) return ip
         }
         return null
     }
@@ -162,10 +160,42 @@ object DdnsModule {
         return o
     }
 
+    /**
+     * GET，返回 (body, httpStatus)；失败时 status=-1 且 body 为 error 信息。
+     * 旧设备（Android 6~7）系统 CA 库过旧，遇到新证书链（如 Let's Encrypt ISRG Root X1）
+     * 会报 "Trust anchor for certification path not found"——此时降级为不校验证书重试一次。
+     */
     private fun httpGet(url: String): Pair<String, Int> {
+        val first = httpGetImpl(url, null)
+        if (first.second == -1) {
+            val m = first.first
+            if (m.contains("Trust anchor") || m.contains("CertPathValidator") ||
+                m.contains("SSLHandshake") || m.contains("hostname verification")) {
+                Logger.w(TAG, "TLS verify failed, retry without verification: ${first.first.take(120)}")
+                return httpGetImpl(url, insecure = true)
+            }
+        }
+        return first
+    }
+
+    private fun httpGetImpl(url: String, insecure: Boolean?): Pair<String, Int> {
         var conn: HttpURLConnection? = null
         return try {
             conn = URL(url).openConnection() as HttpURLConnection
+            if (insecure == true) {
+                val https = conn as? HttpsURLConnection
+                if (https != null) {
+                    val tm = object : X509TrustManager {
+                        override fun checkClientTrusted(c: Array<X509Certificate>?, a: String?) {}
+                        override fun checkServerTrusted(c: Array<X509Certificate>?, a: String?) {}
+                        override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+                    }
+                    val sc = SSLContext.getInstance("TLS")
+                    sc.init(null, arrayOf(tm), java.security.SecureRandom())
+                    https.sslSocketFactory = sc.socketFactory
+                    https.hostnameVerifier = HostnameVerifier { _, _ -> true }
+                }
+            }
             conn.connectTimeout = 10000; conn.readTimeout = 10000
             conn.requestMethod = "GET"
             val body = conn.inputStream.bufferedReader().use { it.readText() }.trim()

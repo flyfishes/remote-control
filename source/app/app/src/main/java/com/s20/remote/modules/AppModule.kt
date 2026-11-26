@@ -49,13 +49,16 @@ object AppModule {
 
         // 1) PackageManager 路径（label/版本完整）
         try {
+            val sdk = android.os.Build.VERSION.SDK_INT
             for (ai in pm.getInstalledPackages(0)) {
                 val isSystem = (ai.applicationInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
                 if (isSystem && !includeSystem) continue
                 val label = try { ai.applicationInfo.loadLabel(pm).toString() } catch (_: Throwable) { ai.packageName }
                 map[ai.packageName] = JSONObject()
                     .put("pkg", ai.packageName).put("label", label).put("system", isSystem)
-                    .put("versionName", ai.versionName ?: "").put("versionCode", ai.longVersionCode)
+                    .put("versionName", ai.versionName ?: "")
+                    // longVersionCode 是 API 28+，Android 6.0 会 NoSuchMethodError
+                    .put("versionCode", if (sdk >= 28) ai.longVersionCode else ai.versionCode.toLong())
                     .put("apkPath", ai.applicationInfo.sourceDir)
             }
         } catch (e: Throwable) {
@@ -63,45 +66,42 @@ object AppModule {
         }
 
         // 2) root pm 路径：补全被禁用/未启动/可见性受限的包（无 root 时跳过， PackageManager 结果已可用）
+        // 注意：部分 ROM（如乐视 EUI 6.0）`pm list packages` 全变体直接 NPE（ROM bug），
+        //      改用 dumpsys package 全量解析（含禁用包），同时补 versionName / codePath
         if (!RootShell.available()) {
             return finishList(map, keyword, includeSystem)
         }
-        val r = RootShell.exec("pm list packages -f", 30_000)
-        val missing = mutableListOf<Pair<String, String>>() // pkg -> apkPath
-        for (line in r.stdout.lines()) {
-            val m = Regex("^package:(.*)=(.*)$").find(line.trim()) ?: continue
-            val apkPath = m.groupValues[1]
-            val pkg = m.groupValues[2]
-            if (map.containsKey(pkg)) continue
-            val isSystem = apkPath.startsWith("/system/") || apkPath.startsWith("/product/") ||
-                    apkPath.startsWith("/vendor/") || apkPath.startsWith("/system_ext/")
-            if (isSystem && !includeSystem) continue
-            missing.add(pkg to apkPath)
-        }
-        // 批量拿版本名：dumpsys 一次输出，避免逐包调用（禁用包 PM 读不到，dumpsys 可以）
-        val verMap = HashMap<String, String>()
-        if (missing.isNotEmpty()) {
-            val dump = RootShell.exec("dumpsys package 2>/dev/null | grep -E 'Package \\[|versionName='", 40_000)
-            var curPkg = ""
-            for (line in dump.stdout.lines()) {
-                val t = line.trim()
-                if (t.startsWith("Package [")) {
-                    curPkg = Regex("Package \\[([^]]+)\\]").find(t)?.groupValues?.get(1)
-                        ?.split(" ")?.firstOrNull() ?: ""
-                } else if (t.startsWith("versionName=") && curPkg.isNotEmpty()) {
-                    verMap[curPkg] = t.substringAfter("versionName=")
-                    curPkg = ""
+        val dump = RootShell.exec("dumpsys package 2>/dev/null | grep -E 'Package \\[|codePath=|versionName='", 40_000)
+        var curPkg = ""
+        var curPath = ""
+        for (line in dump.stdout.lines()) {
+            val t = line.trim()
+            if (t.startsWith("Package [")) {
+                curPkg = Regex("Package \\[([^]]+)\\]").find(t)?.groupValues?.get(1)
+                    ?.split(" ")?.firstOrNull() ?: ""
+                curPath = ""
+            } else if (t.startsWith("codePath=") && curPkg.isNotEmpty()) {
+                curPath = t.substringAfter("codePath=")
+            } else if (t.startsWith("versionName=") && curPkg.isNotEmpty()) {
+                if (!map.containsKey(curPkg)) {
+                    // /data/app 为第三方安装区，其余（/system、/product、/vendor 等）视为系统
+                    val isSystem = !curPath.startsWith("/data/")
+                    if (!isSystem || includeSystem) {
+                        // 6.0 的 codePath 是目录（APK 在其下 base.apk）；旧结构 codePath 直接指向 .apk
+                        val apkFile = when {
+                            curPath.isEmpty() -> ""
+                            curPath.endsWith(".apk") -> curPath
+                            else -> "$curPath/base.apk"
+                        }
+                        val label = labelFromApk(pm, apkFile, curPkg)
+                        map[curPkg] = JSONObject()
+                            .put("pkg", curPkg).put("label", label).put("system", isSystem)
+                            .put("versionName", t.substringAfter("versionName="))
+                            .put("versionCode", 0L).put("apkPath", apkFile)
+                    }
                 }
+                curPkg = ""
             }
-        }
-        for ((pkg, apkPath) in missing) {
-            val ver = verMap[pkg]
-                ?: try { pm.getPackageInfo(pkg, 0).versionName ?: "" } catch (_: Throwable) { "" }
-            // 从 APK 文件解析应用名：禁用/Stub 包 PM 读不到 label，但直接读 APK 资源可行
-            val label = labelFromApk(pm, apkPath, pkg)
-            map[pkg] = JSONObject()
-                .put("pkg", pkg).put("label", label).put("system", false)
-                .put("versionName", ver).put("versionCode", 0L).put("apkPath", apkPath)
         }
 
         return finishList(map, keyword, includeSystem)
