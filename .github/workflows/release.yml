@@ -86,7 +86,9 @@ jobs:
 
       - name: Build release APK
         working-directory: source/app
-        run: ./gradlew assembleRelease --no-daemon
+        run: |
+          chmod +x ./gradlew   # 防止 Windows 提交丢失执行位
+          ./gradlew assembleRelease --no-daemon
 
       - name: Prepare artifacts
         id: art
