@@ -111,10 +111,10 @@ jobs:
         id: art
         run: |
           set -e
-          V="${{ steps.ver.outputs.version }}"
           T="${{ steps.ver.outputs.tag }}"
           mkdir -p release
-          APK="release/S20Remote-${V}-${T}.apk"
+          # tag 已含版本号与日期（如 v1.3.0-20261127），避免再拼 ${V} 造成版本号重复
+          APK="release/S20Remote-${T}.apk"
           cp source/app/app/build/outputs/apk/release/app-release.apk "$APK"
 
           # S20 magisk 模块：用本次编译的 APK 替换模块内旧 APK 后重打包
@@ -144,7 +144,7 @@ jobs:
           - 构建时间：$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M:%S %Z')
 
           ## 安装
-          - 直接安装 APK：\`adb install -r S20Remote-${V}-${T}.apk\`
+          - 直接安装 APK：\`adb install -r S20Remote-${T}.apk\`
           - S20 系统应用方案：刷入 magisk 模块（保留 TETHER 特权）
           - X800：装 APK + 刷入 x800-magisk 包（开机脚本与热点 helper）
 
