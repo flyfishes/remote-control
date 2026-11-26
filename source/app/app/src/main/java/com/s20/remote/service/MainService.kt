@@ -36,6 +36,7 @@ class MainService : Service() {
     private val relay = RelayClient()
     private var wakeLock: PowerManager.WakeLock? = null
     private var ddnsTimer: Thread? = null
+    private var relayRestarter: android.content.BroadcastReceiver? = null
 
     companion object {
         /** 供本地 UI 读取的服务状态（同进程，无需跨进程查询） */
@@ -73,6 +74,15 @@ class MainService : Service() {
         startWakeLock()
         startDdnsTimer()
         registerNetworkCallback()
+        // relay 配置热更新：ConfigModule 改 relayEnabled/relayUrl 后发此广播，立即重启 relay
+        relayRestarter = object : android.content.BroadcastReceiver() {
+            override fun onReceive(c: Context?, i: Intent?) {
+                Logger.i(TAG, "relay restart broadcast")
+                relay.stop()
+                relay.start()
+            }
+        }
+        registerReceiver(relayRestarter, android.content.IntentFilter("com.s20.remote.RESTART_RELAY"))
         Logger.i(TAG, "service ready")
     }
 
@@ -99,6 +109,7 @@ class MainService : Service() {
     }
 
     override fun onDestroy() {
+        try { unregisterReceiver(relayRestarter) } catch (_: Throwable) {}
         httpServer?.stop()
         com.s20.remote.net.StatusReporter.stop()
         com.s20.remote.modules.SwitchGuard.stop()
