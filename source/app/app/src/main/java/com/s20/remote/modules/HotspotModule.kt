@@ -51,13 +51,12 @@ object HotspotModule {
 
         // 通过 uid1000 helper 读取持久化配置，补充 password / ssid / band / channel
         if (helperAvailable()) {
-            val h = RootShell.exec(
-                "su 1000 -c 'CLASSPATH=$HELPER_DEX app_process / com.s20.helper.Main get'", 20000)
-            val ssid = Regex("^SSID=(.*)$", RegexOption.MULTILINE).find(h.stdout)?.groupValues?.get(1)?.trim()
-            val pass = Regex("^PASSWORD=(.*)$", RegexOption.MULTILINE).find(h.stdout)?.groupValues?.get(1)?.trim()
-            val bands = Regex("Channels = \\{([^}]*)\\}").find(h.stdout)?.groupValues?.get(1)?.trim()
-            val band = Regex("^BAND=(\\S+)$", RegexOption.MULTILINE).find(h.stdout)?.groupValues?.get(1)
-            val on = Regex("^isOn=(\\w+)$", RegexOption.MULTILINE).find(h.stdout)?.groupValues?.get(1)
+            val h = helperExec("get", "", "", "").optString("output")
+            val ssid = Regex("^SSID=(.*)$", RegexOption.MULTILINE).find(h)?.groupValues?.get(1)?.trim()
+            val pass = Regex("^PASSWORD=(.*)$", RegexOption.MULTILINE).find(h)?.groupValues?.get(1)?.trim()
+            val bands = Regex("Channels = \\{([^}]*)\\}").find(h)?.groupValues?.get(1)?.trim()
+            val band = Regex("^BAND=(\\S+)$", RegexOption.MULTILINE).find(h)?.groupValues?.get(1)
+            val on = Regex("^isOn=(\\w+)$", RegexOption.MULTILINE).find(h)?.groupValues?.get(1)
             if (!ssid.isNullOrEmpty()) o.put("currentSsid", ssid)
             o.put("password", pass ?: "")
             // 频段：优先 helper 的 getBand()，回退从 channel 推断（>=36 为 5G）
@@ -124,17 +123,30 @@ object HotspotModule {
     }
 
     private const val HELPER_DEX = "/system/etc/s20apcfg.dex"
+    /** AOSP 通用 helper（Android 6.x 等无 TetheringManager 的设备，如乐视） */
+    private const val HELPER_DEX_AOSP = "/system/etc/s20letvh.dex"
     private val SAFE = Regex("^[A-Za-z0-9._-]{1,32}$")
 
-    private fun helperAvailable(): Boolean {
-        val r = RootShell.exec("[ -f $HELPER_DEX ] && echo yes || echo no", 10000)
-        return r.stdout.trim() == "yes"
+    /** 检测可用的 helper 类型：sem=三星 SemWifiManager 版，aosp=通用 WifiManager 版 */
+    private fun helperKind(): String? {
+        val r = RootShell.exec(
+            "for f in $HELPER_DEX $HELPER_DEX_AOSP; do [ -f \$f ] && echo \$f; done", 10000)
+        val first = r.stdout.trim().lines().firstOrNull { it.isNotBlank() } ?: return null
+        return if (first == HELPER_DEX) "sem" else "aosp"
     }
 
-    /** 通过 uid1000 helper 调用三星 SemWifiManager（真机验证过的可靠路径） */
+    private fun helperAvailable(): Boolean = helperKind() != null
+
+    /** 按 helper 类型组命令（三星/通用两个入口类，输出协议一致） */
     private fun helperExec(mode: String, ssid: String, pass: String, band: String): JSONObject {
         val o = JSONObject()
-        val cmd = "su 1000 -c 'CLASSPATH=$HELPER_DEX app_process / com.s20.helper.Main " +
+        val dex = when (helperKind()) {
+            "aosp" -> HELPER_DEX_AOSP; else -> HELPER_DEX
+        }
+        val main = when (helperKind()) {
+            "aosp" -> "com.s20.helper.LetvMain"; else -> "com.s20.helper.Main"
+        }
+        val cmd = "su 1000 -c 'CLASSPATH=$dex app_process / $main " +
                 "$mode $ssid $pass $band'"
         val r = RootShell.exec(cmd, 60000)
         o.put("ok", r.ok && r.stdout.contains("FATAL").not())

@@ -103,7 +103,7 @@ input[readonly]{opacity:.7;cursor:not-allowed}
     <button onclick="refreshSw()">刷新开关</button>
     <button id="btnScreenOff" onclick="screenOff()">熄屏</button>
     <button id="btnWakeUp" onclick="wakeUp()">唤醒</button>
-    <button onclick="cmd('ddns.update',{}).then(r=>logLine('DDNS: '+JSON.stringify(r.data)))">更新 DDNS</button>
+    <button onclick="cmd('ddns.update',{force:true}).then(r=>logLine('DDNS: '+JSON.stringify(r.data)))">更新 DDNS</button>
     <button id="btnReboot" class="dng" onclick="rebootDev()">重启手机</button>
   </div>
   <div class="row" id="swRow" style="margin-top:8px">开关加载中…</div></div>
@@ -341,7 +341,7 @@ input[readonly]{opacity:.7;cursor:not-allowed}
       <div><label>IP 类型</label><select id="cfgDdnsIpType"><option value="ipv6">IPv6</option><option value="ipv4">IPv4</option><option value="all">IPv4+IPv6</option></select></div>
       <div><label>更新间隔（分钟，默认360=6小时）</label><input id="cfgDdnsMin" type="number" value="360" min="1"></div>
     </div>
-    <div class="row" style="margin-top:8px"><button onclick="cmd('ddns.update',{}).then(r=>logLine('更新 DDNS: '+JSON.stringify(r.data)))">立即更新 DDNS</button><button onclick="cmd('ddns.get',{}).then(r=>{out('cfgOut',r.data);logLine('查询 DDNS 状态完成')})">查询 DDNS 状态</button></div>
+    <div class="row" style="margin-top:8px"><button onclick="cmd('ddns.update',{force:true}).then(r=>logLine('更新 DDNS: '+JSON.stringify(r.data)))">立即更新 DDNS</button><button onclick="cmd('ddns.get',{}).then(r=>{out('cfgOut',r.data);logLine('查询 DDNS 状态完成')})">查询 DDNS 状态</button></div>
   </div>
   <div class="card">
     <h2>日志</h2>

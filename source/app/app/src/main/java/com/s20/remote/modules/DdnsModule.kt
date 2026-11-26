@@ -28,7 +28,7 @@ object DdnsModule {
     private const val API = "https://www.dnsexit.com/RemoteUpdate.sv"
 
     fun register() {
-        CommandRouter.register("ddns.update") { update() }
+        CommandRouter.register("ddns.update") { p -> update(p) }
         CommandRouter.register("ddns.get") { get() }
     }
 
@@ -108,7 +108,8 @@ object DdnsModule {
         return result
     }
 
-    fun update(): JSONObject {
+    fun update(p: JSONObject = JSONObject()): JSONObject {
+        val force = p.optBoolean("force", false)
         val host = Config.ddnsHost
         if (host.isEmpty()) throw IllegalStateException("ddnsHost 未配置")
         val ips = resolveIps()
@@ -121,8 +122,19 @@ object DdnsModule {
             return o
         }
         var allOk = true
+        var updated = 0
+        var skipped = 0
         val details = org.json.JSONArray()
         for ((type, ip) in ips) {
+            val last = if (type == "ipv4") Config.ddnsLastIpv4 else Config.ddnsLastIpv6
+            if (!force && ip == last && last.isNotEmpty()) {
+                // IP 未变化：跳过实际请求（DNSExit 亦提示 IP 未变时不要重复提交）
+                skipped++
+                details.put(JSONObject()
+                    .put("type", type).put("ip", ip).put("ok", true)
+                    .put("skipped", true).put("msg", "IP 未变化，跳过更新"))
+                continue
+            }
             val url = "$API?login=${URLEncoder.encode(Config.ddnsUser, "UTF-8")}" +
                     "&password=${URLEncoder.encode(Config.ddnsPass, "UTF-8")}" +
                     "&host=${URLEncoder.encode(host, "UTF-8")}" +
@@ -132,7 +144,10 @@ object DdnsModule {
             // 响应体可能带 HTTP 状态行前缀，按"行首状态码"匹配。
             val body = code.first.trim()
             val ok = Regex("(^|\\n)\\s*(0|4)(\\s|=)").containsMatchIn(body)
-            if (!ok) allOk = false
+            if (!ok) allOk = false else updated++
+            if (ok) {
+                if (type == "ipv4") Config.ddnsLastIpv4 = ip else Config.ddnsLastIpv6 = ip
+            }
             details.put(JSONObject()
                 .put("type", type).put("ip", ip).put("ok", ok)
                 .put("httpStatus", code.second).put("msg", code.first.trim()))
@@ -140,8 +155,13 @@ object DdnsModule {
         }
         o.put("ok", allOk)
         o.put("ipUsed", if (ips.size == 1) ips[0].second else JSONObject.NULL)
+        o.put("updated", updated); o.put("skipped", skipped)
         o.put("details", details)
-        o.put("msg", if (allOk) "ok" else "部分更新失败")
+        o.put("msg", when {
+            updated == 0 && skipped > 0 -> "IP 未变化，跳过更新"
+            allOk -> "ok"
+            else -> "部分更新失败"
+        })
         return o
     }
 

@@ -464,7 +464,7 @@ class MainActivity : AppCompatActivity() {
         ddnsBusy = true; render()
         thread(name = "ui-ddns") {
             val msg = try {
-                val r = DdnsModule.update()
+                val r = DdnsModule.update(org.json.JSONObject().put("force", true))
                 "DDNS: ${r.optString("msg")} ip=${r.optString("ipUsed")}"
             } catch (e: Exception) {
                 "DDNS 失败: ${e.message}"

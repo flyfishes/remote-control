@@ -90,6 +90,15 @@ object Config {
         get() = sp.getInt("ddnsIntervalMin", 360)
         set(v) = sp.edit().putInt("ddnsIntervalMin", v).apply()
 
+    /** 上次成功更新的 IP（变化检测：定时更新时 IP 未变则跳过请求，避免无谓调用） */
+    var ddnsLastIpv4: String
+        get() = sp.getString("ddnsLastIpv4", "")!!
+        set(v) = sp.edit().putString("ddnsLastIpv4", v).apply()
+
+    var ddnsLastIpv6: String
+        get() = sp.getString("ddnsLastIpv6", "")!!
+        set(v) = sp.edit().putString("ddnsLastIpv6", v).apply()
+
     var logEnabled: Boolean
         get() = sp.getBoolean("logEnabled", false)
         set(v) = sp.edit().putBoolean("logEnabled", v).apply()
@@ -266,6 +275,7 @@ object Config {
         put("relayEnabled", relayEnabled)
         put("ddnsProvider", ddnsProvider); put("ddnsUser", ddnsUser); put("ddnsHost", ddnsHost)
         put("ddnsIpType", ddnsIpType); put("ddnsIntervalMin", ddnsIntervalMin)
+        put("ddnsLastIpv4", ddnsLastIpv4); put("ddnsLastIpv6", ddnsLastIpv6)
         put("logEnabled", logEnabled); put("logFile", logFile)
         put("deviceName", deviceName)
         put("heartbeatSec", heartbeatSec); put("batteryWarnPct", batteryWarnPct)
@@ -305,6 +315,8 @@ object Config {
                     ddnsIpType = if (v in listOf("ipv4", "ipv6", "all")) v else "ipv6"
                 }
                 "ddnsIntervalMin" -> ddnsIntervalMin = (value as Number).toInt()
+                "ddnsLastIpv4" -> ddnsLastIpv4 = value.toString()
+                "ddnsLastIpv6" -> ddnsLastIpv6 = value.toString()
                 "logEnabled" -> logEnabled = value as Boolean
                 "logFile" -> logFile = value.toString()
                 "deviceName" -> deviceName = value.toString()
