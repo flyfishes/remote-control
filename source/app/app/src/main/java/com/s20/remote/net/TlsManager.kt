@@ -61,7 +61,7 @@ object TlsManager {
     @Volatile private var lastError: String? = null
 
     fun certDir(ctx: Context): File {
-        val de = ctx.createDeviceProtectedStorageContext()
+        val de = com.s20.remote.core.Compat.deContext(ctx)
         return File(de.filesDir, DIR).apply { if (!exists()) mkdirs() }
     }
 

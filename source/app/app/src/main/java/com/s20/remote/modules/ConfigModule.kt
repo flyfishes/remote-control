@@ -67,7 +67,8 @@ object ConfigModule {
     private fun restart(ctx: Context): JSONObject {
         ctx.stopService(Intent(ctx, com.s20.remote.service.MainService::class.java))
         Thread.sleep(500)
-        ctx.startForegroundService(Intent(ctx, com.s20.remote.service.MainService::class.java))
+        com.s20.remote.core.Compat.startForegroundCompat(
+            ctx, Intent(ctx, com.s20.remote.service.MainService::class.java))
         return JSONObject().put("restarted", true)
     }
 }

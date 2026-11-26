@@ -13,8 +13,8 @@ object Config {
 
     fun init(ctx: Context) {
         appCtx = ctx.applicationContext
-        // Direct Boot：配置存设备保护(DE)区，锁屏未解锁时也可读写
-        sp = appCtx.createDeviceProtectedStorageContext()
+        // Direct Boot：配置存设备保护(DE)区，锁屏未解锁时也可读写（API 23 降级为 CE 区，见 Compat）
+        sp = com.s20.remote.core.Compat.deContext(appCtx)
             .getSharedPreferences("s20_remote", Context.MODE_PRIVATE)
     }
 

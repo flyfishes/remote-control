@@ -30,9 +30,9 @@ object ScreenModule {
         CommandRouter.register("screen.capture") { p -> capture(app, p) }
     }
 
-    /** 截图原始 PNG 的落盘目录（DE 区，锁屏可用） */
+    /** 截图原始 PNG 的落盘目录（DE 区，锁屏可用；API 23 降级 CE） */
     private fun shotDir(ctx: Context): File =
-        File(ctx.createDeviceProtectedStorageContext().cacheDir, "shot").apply { mkdirs() }
+        File(com.s20.remote.core.Compat.deContext(ctx).cacheDir, "shot").apply { mkdirs() }
 
     private fun capture(ctx: Context, p: JSONObject): JSONObject = synchronized(lock) {
         val maxW = p.optInt("max", 720).coerceIn(240, 1440)
@@ -46,6 +46,10 @@ object ScreenModule {
             val dir = shotDir(ctx)
             val raw = File(dir, "shot.png")
             try { raw.delete() } catch (_: Exception) { }
+            // 预创建空文件：文件先由本进程建立（SELinux label 带 app 自身的 category），
+            // root 覆盖写不会改变 inode label。否则（如 Android 6 乐视）root 创建的文件
+            // label 是 app_data_file:s0 无 category，本进程读取会被 MLS 规则拒绝导致解码失败。
+            try { raw.createNewFile() } catch (_: Exception) { }
             val q = "'" + raw.absolutePath + "'"
 
             // 1) 常规方式；2) 指定 display 0；3) 老版本只支持 stdout 重定向

@@ -46,7 +46,8 @@ class BootReceiver : BroadcastReceiver() {
     private fun startService(context: Context) {
         try {
             val i = Intent(context, MainService::class.java)
-            context.startForegroundService(i)
+            // API 26+ 用 startForegroundService，低版本（6.0）用 startService
+            com.s20.remote.core.Compat.startForegroundCompat(context, i)
             Log.i(TAG, "MainService start requested")
         } catch (e: Throwable) {
             // Android 15 限制部分来源启动 dataSync 型前台服务：5 秒后经 AlarmManager 重试一次

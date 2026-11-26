@@ -243,16 +243,28 @@ class MainService : Service() {
 
     private fun buildNotification(text: String): Notification {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        val ch = NotificationChannel("s20_remote", "Remote Service", NotificationManager.IMPORTANCE_LOW)
-        nm.createNotificationChannel(ch)
         val pi = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE)
-        return Notification.Builder(this, "s20_remote")
+        if (Build.VERSION.SDK_INT >= 26) {
+            val ch = NotificationChannel("s20_remote", "Remote Service", NotificationManager.IMPORTANCE_LOW)
+            nm.createNotificationChannel(ch)
+            return Notification.Builder(this, "s20_remote")
+                .setContentTitle("远程控制")
+                .setContentText(text)
+                .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
+                .setContentIntent(pi)
+                .setOngoing(true)
+                .build()
+        }
+        // API 23-25：无通知渠道，走旧版构造器
+        @Suppress("DEPRECATION")
+        return Notification.Builder(this)
             .setContentTitle("远程控制")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
             .setContentIntent(pi)
             .setOngoing(true)
+            .setPriority(Notification.PRIORITY_LOW)
             .build()
     }
 

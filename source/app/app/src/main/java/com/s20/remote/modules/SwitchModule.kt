@@ -81,7 +81,12 @@ object SwitchModule {
         val on = p.optBoolean("on", false)
         val feat = "wifi.set"
         if (RootShell.available()) {
-            return applySwitch { RootShell.exec("cmd wifi set-wifi-enabled ${if (on) "enabled" else "disabled"}", 15000) }
+            // `cmd wifi` 是 Android 7+ 才有的 shell 命令；6.0 回退 svc wifi
+            val cmd = if (sdk >= 24)
+                "cmd wifi set-wifi-enabled ${if (on) "enabled" else "disabled"}"
+            else
+                "svc wifi ${if (on) "enable" else "disable"}"
+            return applySwitch { RootShell.exec(cmd, 15000) }
         }
         if (sdk <= 28) {
             return try {

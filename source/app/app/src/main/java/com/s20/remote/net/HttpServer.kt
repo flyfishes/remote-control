@@ -47,7 +47,7 @@ class HttpServer(
     init {
         if (sslFactory != null) {
             try {
-                makeSecure(sslFactory, arrayOf("TLSv1.2", "TLSv1.3"))
+                makeSecure(sslFactory, supportedTlsProtocols())
                 Logger.i(TAG, "HTTPS enabled on [$hostname]:$port")
             } catch (e: Exception) {
                 Logger.e(TAG, "makeSecure failed: ${e.message}")
@@ -55,6 +55,21 @@ class HttpServer(
         } else {
             Logger.w(TAG, "plain HTTP on [$hostname]:$port (no TLS)")
         }
+    }
+
+    /**
+     * 设备实际支持的 TLS 协议列表（优先 1.3，降序）。
+     * Android 6.0 无 TLSv1.3，写死协议名会导致 NanoHTTPD 启动失败。
+     */
+    private fun supportedTlsProtocols(): Array<String> {
+        val wanted = listOf("TLSv1.3", "TLSv1.2", "TLSv1.1", "TLSv1")
+        val supported = try {
+            javax.net.ssl.SSLContext.getDefault().createSSLEngine().supportedProtocols?.toSet()
+        } catch (_: Exception) { null }
+        val list = if (supported.isNullOrEmpty()) wanted
+        else wanted.filter { p -> supported.any { it.equals(p, ignoreCase = true) } }
+        if (list.isEmpty()) return arrayOf("TLSv1.2")
+        return list.toTypedArray()
     }
 
     private val unauthorizedPage = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">

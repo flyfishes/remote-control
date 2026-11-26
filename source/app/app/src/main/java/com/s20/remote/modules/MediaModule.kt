@@ -264,8 +264,8 @@ object MediaModule {
             if (scaled !== bmp) scaled.recycle()
             bmp.recycle()
 
-            // 临时文件（DE 缓存，锁屏可用）+ /sdcard 留存
-            val dir = File(ctx.createDeviceProtectedStorageContext().cacheDir, "media").apply { mkdirs() }
+            // 临时文件（DE 缓存，锁屏可用；API 23 降级 CE）+ /sdcard 留存
+            val dir = File(com.s20.remote.core.Compat.deContext(ctx).cacheDir, "media").apply { mkdirs() }
             val tmp = File(dir, "photo.jpg")
             tmp.writeBytes(raw)
             val name = "photo_${stamp()}.jpg"
@@ -309,7 +309,7 @@ object MediaModule {
         ensurePerm(android.Manifest.permission.RECORD_AUDIO, "MICROPHONE", "media.record")?.let { return it }
         ensureForegroundForCapture()?.let { return it }
 
-        val dir = File(ctx.createDeviceProtectedStorageContext().cacheDir, "media").apply { mkdirs() }
+        val dir = File(com.s20.remote.core.Compat.deContext(ctx).cacheDir, "media").apply { mkdirs() }
         val tmp = File(dir, "record.m4a")
         try { tmp.delete() } catch (_: Exception) {}
 

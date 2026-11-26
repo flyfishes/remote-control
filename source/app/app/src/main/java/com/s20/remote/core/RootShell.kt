@@ -120,7 +120,8 @@ object RootShell {
     }
 
     private fun ensureShell() {
-        if (proc != null && proc!!.isAlive) return
+        // Process.isAlive() 是 API 26+，Android 6.0（乐视 1 Pro）会 NoSuchMethodError
+        if (processAlive(proc)) return
         killShell()
         proc = Runtime.getRuntime().exec(arrayOf("su", "-c", "sh"))
         writer = BufferedWriter(OutputStreamWriter(proc!!.outputStream))
@@ -128,6 +129,12 @@ object RootShell {
         // 错误流直接丢弃（输出已 2>&1 合并）
         Thread { try { proc!!.errorStream.readBytes() } catch (_: Exception) {} }.start()
         Thread.sleep(200)
+    }
+
+    /** 全版本兼容的存活检测：exitValue() 未抛异常=已退出，抛 IllegalThreadStateException=仍在运行 */
+    private fun processAlive(p: Process?): Boolean {
+        if (p == null) return false
+        return try { p.exitValue(); false } catch (e: IllegalThreadStateException) { true }
     }
 
     private fun killShell() {

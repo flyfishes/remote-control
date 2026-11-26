@@ -20,6 +20,7 @@ local.properties
 
 # 其他文件夹
 tools/
+backup/
 
 # 签名密钥与本地工作区
 source/app/app/keystore.jks
