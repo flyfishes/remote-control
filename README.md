@@ -1,6 +1,6 @@
-# S20 Remote（远程控制）
+# S20 / Letv X800 Remote（远程控制）
 
-用手机（已 root 的三星 S20 / SM-G9810，Android 13）作为被控端，通过 **网页控制台** 远程查看状态、收发短信、管理应用与文件、截屏、开关网络、熄屏/唤醒/重启。支持两种链路：
+用已 root 的手机作为被控端——支持 **三星 Galaxy S20 5G（SM-G9810 / Android 13）** 与 **乐视 1 Pro X800（Android 6.0）**，通过 **网页控制台** 远程查看状态、收发短信、管理应用与文件、拍照录音、截屏、开关网络、熄屏/唤醒/重启。支持两种链路：
 
 ```
                      ┌──────────────────────────────┐
@@ -25,19 +25,23 @@
 ```
 s20-remote/
 ├── README.md
+├── .github/workflows/release.yml       # GitHub Actions：自动编译 + Release（tag=版本号+日期）
 ├── source/                    # 源码
 │   ├── app/                   # Android App（Gradle 工程，Kotlin）
 │   ├── server/                # 中转服务器（Python / aiohttp）
 │   │   ├── relay_server.py
-│   │   └── relay/             # store.py（SQLite）、web/index.html、nginx/systemd 配置
+│   │   └── relay/             # store.py（路由）、store_sqlite.py / store_mysql.py、web/index.html、nginx/systemd 配置
 │   └── magisk/                # Magisk 模块（priv-app 安装 + 开机脚本 + 热点 helper）
 ├── deploy/                    # 部署产物（可直接拷贝到目标机）
 │   ├── app/
-│   │   ├── S20Remote-1.3.0.apk        # 普通安装包（可无 root 使用基础功能）
-│   │   └── s20remote-magisk.zip       # Magisk 模块（priv-app + 开机自启 + 热点 helper）
+│   │   ├── S20Remote-1.3.0.apk        # 通用 APK（S20 / X800 共用，签名一致）
+│   │   ├── S20Remote-1.3.0-x800.apk   # X800 验证包（= 最新 release，minSdk 23）
+│   │   ├── s20remote-magisk.zip       # S20 Magisk 模块（priv-app + 开机自启 + 三星热点 helper）
+│   │   └── x800-magisk.zip            # X800 Magisk 包（开机脚本 + AOSP 热点 helper dex）
 │   └── server/
 │       ├── relay-deploy/              # 可直接上传服务器的目录（含 install.sh、certs/）
 │       └── s20relay-deploy.zip        # 上述目录的压缩包
+├── letv-x800/                 # 乐视 X800 刷机资源（ROM / TWRP / 驱动，不含 backup）
 ├── docs/
 │   ├── app-home.png           # App 首页截图
 │   └── web-console.png        # 网页控制台截图
@@ -55,16 +59,18 @@ s20-remote/
 | 文件管理 | 列表/读/写/删/改/复制/详情 | 是（全盘） | 无 root 时仅 `/sdcard` + 应用私有目录，需「所有文件访问」 |
 | 应用管理 | 列表/安装/卸载/启动/停止/进程 | 是 | 列表可无 root（PackageManager） |
 | 截屏 | 缩放 + JPEG 压缩后回传 | 是 | — |
+| 拍照 / 录音 | Camera2 拍照、MediaRecorder 录音（异步，最长 24 小时） | 否* | 需 CAMERA / RECORD_AUDIO 权限；缺权限时 root 自动授权并置 App 前台 |
 | 熄屏 | `keyevent 223`（回退 26） | 是 | 无 root 可用「设备管理员 lockNow」 |
 | 唤醒 / 自动解锁 | 点亮 → 上滑 → 输入 PIN | 是 | PIN 存 DE 区，接口不回显 |
 | 重启 | `su -c reboot` | 是 | — |
 | WiFi / 蓝牙 开关 | 读状态走公共 API；写操作 root 优先 | 是 | 无 root：WiFi≤9、蓝牙≤12 可用系统 API |
 | 移动数据 / 定位 开关 | `svc data` / `settings put` | 是 | 无公共 API |
-| 热点管理 | SSID/密码/频段、客户端列表 | 是 | 仅三星机型（SemWifiManager helper） |
+| 热点管理 | SSID/密码/频段、客户端列表 | 是 | 三星用 `s20apcfg.dex`（SemWifiManager）；X800 等 AOSP 机型用 `s20letvh.dex`（uid1000 helper） |
 | 开关自动恢复 | 5 项开关被关自动打开，独立线程 | 是 | 不依赖中转连接 |
 | 流量监控 | 短信查询 / 本地命令 / 阈值告警 | 部分 | 本地命令模式需要 root |
 | HTTPS 证书 | 自签（EC P-256）生成、导入、指纹 | 否 | — |
-| 中转 / SQLite 事件库 | 心跳不落库，其余事件全量入库 | 否 | — |
+| 中转 / SQLite 事件库 | 心跳不落库，其余事件全量入库 | 否 | 数据库可选 SQLite 3 / MySQL 8 |
+| DDNS 动态域名 | IPv4/IPv6 更新，IP 未变自动跳过 | 否 | 老设备 CA 过期时自动降级重试 |
 
 ### 能力模型（v1.2.0 起）
 
@@ -119,6 +125,21 @@ adb install -r deploy/app/S20Remote-1.3.0.apk
    - `system/etc/s20apcfg.dex` —— 热点配置 helper（以 uid 1000 运行）。
 
 > 注意：用 `adb install` 覆盖安装后，系统优先运行 `/data/app` 的普通安装副本（不再享有 priv-app 特权），需要完整能力请卸载普通副本、只保留模块版本。
+
+### 方式 C：乐视 1 Pro X800（Android 6.0 / API 23）
+
+X800 的 EUI 系统会拦截 `BOOT_COMPLETED` 广播，且无三星 `SemWifiManager`，需 **APK + Magisk 开机包** 配合：
+
+```bash
+# 1) 安装 APK（S20 / X800 通用，minSdk 23）
+adb install -r deploy/app/S20Remote-1.3.0-x800.apk
+
+# 2) Magisk App「从本地安装」刷入 x800-magisk.zip 并重启
+#    包含：service.sh（开机 root 拉服务，绕过 EUI 自启拦截）
+#          system/etc/s20letvh.dex（AOSP 热点 helper，uid1000 调用 setWifiApEnabled）
+```
+
+> 6.0 注意：WiFi 与热点互斥（开热点会断自身 WiFi）；系统 CA 过旧，DDNS 更新证书失败会自动降级重试；中转若用 wss 需配置 `relayInsecureTls=true`。
 
 ### 首次配置
 
@@ -317,25 +338,44 @@ SQLite（`relay/store.py`）：`device_state(device, last_seen, last_status…)`
 
 ## 构建
 
+### 本地构建
+
 ```bash
 cd source/app
-JAVA_HOME=<jdk17> ../tools/gradle/gradle-8.7/bin/gradle assembleRelease --offline
+chmod +x ./gradlew
+JAVA_HOME=<jdk17> ./gradlew assembleRelease --no-daemon
 # 产物：app/build/outputs/apk/release/app-release.apk（versionCode 19 / 1.3.0）
 ```
 
-- JDK 17 + Gradle 8.7 + Android SDK 33；Kotlin + AppCompat + BouncyCastle（自签证书）
+- JDK 17 + Gradle 8.7（wrapper 自带）+ Android SDK 33 / build-tools 34.0.0；AGP 8.1.4 + Kotlin 1.9.22 + BouncyCastle（自签证书）
 - 网页控制台源码在 `source/server/relay/web/index.html`，构建前需同步三份副本：
   `source/server/relay/web/index.html`、`source/app/app/src/main/assets/index.html`、`deploy/server/relay-deploy/relay/web/index.html`
+
+### GitHub Actions 自动构建与 Release
+
+`.github/workflows/release.yml`：push 到 `main` 或手动 `workflow_dispatch` 触发，自动完成编译与发布：
+
+1. JDK 17 + Android SDK（用 runner 预装 SDK，不依赖 `setup-android` action）
+2. 从仓库 Secret `KEYSTORE_BASE64` 还原签名 keystore（需在 Settings → Secrets → Actions 配置，内容为 `source/app/app/keystore.jks` 的 base64）
+3. 切到官方 Maven 仓库（本地 `settings.gradle` 仍用阿里云镜像），`./gradlew assembleRelease`
+4. 生成 tag：`v<versionName>-<YYYYMMDD>`（同日重复构建追加 `-2`），创建 Release 并上传：
+   - `S20Remote-<tag>.apk` —— 通用 APK
+   - `s20remote-magisk-<tag>.zip` —— S20 模块（内嵌本次新 APK 重打包）
+   - `x800-magisk-<tag>.zip` —— X800 开机/热点包
+
+> CI 产物文件名以 tag 为准（如 `S20Remote-v1.3.0-20261127.apk`），不再重复拼接版本号。
 
 ---
 
 ## 兼容性
 
-- minSdk 28（Android 9），targetSdk 33，已在 Android 13 / SM-G9810 上完整验证；
+- **minSdk 23（Android 6.0）**，targetSdk 33，同一 APK 通用于 S20（API 33）与乐视 X800（API 23），签名一致可互相覆盖升级；
 - 已处理：Android 14+ 前台服务类型（`dataSync` + 权限声明）、Android 15 `BOOT_COMPLETED` 启动限制（失败转 AlarmManager 重试）、Android 12+ 蓝牙权限、Android 13+ 通知/附近 WiFi 权限、Android 10+ 分区存储；
+- API 23 特殊处理：`Process.isAlive()` / `longVersionCode` 按 SDK 分支降级、通知渠道与 `startForegroundService` 版本保护、TLS 按设备 `supportedProtocols` 协商、DE 存储 API24+ 保护、EUI `pm list` NPE 改用 `dumpsys package` 兜底；
 - 解锁滑动坐标按屏幕尺寸实时计算，锁屏判定用 `KeyguardManager`（全机型）；
 - 非 root 时自动降级并在 UI 标明原因，不会出现「显示正常但数据是假的」；
-- 热点配置依赖三星 `SemWifiManager`（helper dex），非三星机型返回 `NOT_SUPPORTED`。
+- 热点配置：三星机型用 `s20apcfg.dex`（`SemWifiManager`），X800 等非三星用 `s20letvh.dex`（Magisk 模块挂载到 `/system/etc`，uid1000 调用隐藏 API）；两者都不具备时返回 `NOT_SUPPORTED`；
+- 开机自启：普通机型走 `BOOT_COMPLETED`；EUI 等拦截广播的 ROM 由 Magisk `service.d` 脚本以 root 拉起服务（X800 方案）；App 首页打开时若服务未运行也会自动拉起。
 
 ## 常见问题
 
@@ -350,8 +390,12 @@ JAVA_HOME=<jdk17> ../tools/gradle/gradle-8.7/bin/gradle assembleRelease --offlin
 | 重启后屏幕不熄 | 可能开启了开发者选项「不锁定屏幕」或充电保持唤醒；App 内可开启「前台空闲 30 秒自动熄屏」兜底（v1.2.1 起开机自启即生效，不依赖界面是否显示） |
 | 网页点「启」没反应 | v1.2.1 已修：改由 root `am start -n <pkg>/<activity>` 启动（旧版走 `startActivity` 被 Android 10+ 后台启动限制静默拦截）。仍失败时日志会给出 `[DEVICE_ERROR]` 与具体原因 |
 | 拍照报 CAMERA_DISABLED / disabled by policy | 相机被设备上的管控软件通过 Knox/MDM 策略全局禁用（系统相机 App 也打不开）；需处理管控端策略，录音功能不受影响 |
-| 录音文件没有声音 | 已修复：Samsung 把麦克风/相机 appops 钉死为「仅在使用中允许」，后台采集会被系统静音。现在拍照/录音前 App 会自动解锁屏幕（锁定时点亮+上滑+输 PIN，约 5-10 秒）并把自身置于前台，采集结束自动完成；解锁失败（未配置 PIN/PIN 不对）会返回明确错误。注意：解锁+录音总耗时可能超过中转 15 秒命令超时，锁定状态下建议选 8 秒以内录音 |
+| 录音文件没有声音 | 已修复：Samsung 把麦克风/相机 appops 钉死为「仅在使用中允许」，后台采集会被系统静音。现在拍照/录音前 App 会自动解锁屏幕（锁定时点亮+上滑+输 PIN，约 5-10 秒）并把自身置于前台，采集结束自动完成；解锁失败（未配置 PIN/PIN 不对）会返回明确错误。录音为异步模式，命令立即返回、后台录制，用 `media.recordStatus` 轮询进度，不受中转 15 秒超时约束 |
 | 熄屏后短信/文件（CE 区）异常 | 熄屏会重新上锁，FBE 的 CE 存储随之不可用；需要长期保持解锁请关闭自动熄屏或延长系统屏幕超时 |
+| X800 重启后服务不自启 | EUI 拦截 `BOOT_COMPLETED`，需刷入 `x800-magisk.zip`（`service.d` 脚本 root 拉起）；确认 Magisk 已授予 root |
+| X800 中转连上后提示 device offline | 检查 App 内「中转服务器」开关是否打开；改地址/开关后服务会自动重连，无需重启 |
+| X800 HTTPS 启动失败 | Android 6.0 不支持 TLSv1.3，已改为按设备协议协商；确认用的是 minSdk 23 的新包 |
+| X800 开热点后自身 WiFi 断开 | Android 6.0 WiFi 与热点互斥，属系统限制，非程序 bug |
 
 ## 更新记录
 
@@ -361,9 +405,24 @@ JAVA_HOME=<jdk17> ../tools/gradle/gradle-8.7/bin/gradle assembleRelease --offlin
   - `media.photo`：Camera2 后台直接拍一帧 JPEG（无需人工操作、无需亮屏），支持前/后摄与清晰度/质量参数；缺 `CAMERA` 权限时 root 下自动 `pm grant` + `appops set CAMERA allow`（Android 11+ 后台访问相机的放行手段）；仍不可用降级为拉起系统相机 App 人工拍摄。本地另存 `/sdcard/DCIM/S20Remote`。
   - `media.record`：MediaRecorder AAC/m4a 录音，**异步模式**——命令立即返回、后台独立线程录制，`seconds` 默认 15、范围 1~86400（最长 24 小时）；`media.recordStop` 手动停止、`media.recordStatus` 轮询进度；完成后文件保存在 `/sdcard/Music/S20Remote`，网页端可点「下载」经中转 /file 流式取回。缺 `RECORD_AUDIO` 权限处理同上。
   - App 首页启动时自动申请 `CAMERA`/`RECORD_AUDIO` 运行时权限；能力面板（网页+App）新增相机/麦克风权限与 photo/record 功能状态。
-  - 已知限制：录音 ≤10 秒（中转 15s 命令超时约束）；若设备装有管控软件（如 Knox MDM 策略禁止相机），Camera2 与系统相机均会返回 `CAMERA_DISABLED ... disabled by policy`，此时录音不受影响。
-    > v1.3.0 后续调整：录音改为异步模式（命令立即返回 + 后台录制 + 状态轮询），时长上限提升到 24 小时，不再受中转 15s 超时约束。
+  - 已知限制：若设备装有管控软件（如 Knox MDM 策略禁止相机），Camera2 与系统相机均会返回 `CAMERA_DISABLED ... disabled by policy`，此时录音不受影响。
+    > 录音已改为异步模式（命令立即返回 + 后台录制 + 状态轮询），时长上限 24 小时，不受中转 15s 命令超时约束。
 - 修复录音无声：Samsung 设备 RECORD_AUDIO/CAMERA appops 被钉死为 foreground（后台采集被系统静音，dumpsys 显示 `rec ... silenced`）。拍照/录音命令现在会先自动解锁屏幕（锁定时点亮→上滑→输 PIN）再把 App 置于前台（`MainActivity`），采集完成后 App 留在前台，由空闲熄屏机制自然恢复；实测锁屏态远程录音 `not silenced`。
+
+### 乐视 X800 适配（2026-11）
+
+- minSdk 降至 23，API 23/24/26/28/29/33 全部分级兼容，S20 侧走原有路径、行为不变；
+- 新增 AOSP 热点 helper（`s20letvh.dex`），与三星 helper 双探测，覆盖非三星机型；
+- X800 开机自启改由 Magisk `service.d` 脚本绕过 EUI 对 `BOOT_COMPLETED` 的拦截；
+- 修复 X800 专项问题：应用列表为空（EUI `pm list` NPE + `longVersionCode`）、DDNS 老 CA 证书失败、HTTPS TLSv1.3 不支持、截图 SELinux label、relay 配置热更新不生效；
+- DDNS：IPv4/IPv6 未变化自动跳过请求，Web 手动按钮 `force:true` 强制更新；
+- 部署包：`deploy/app/S20Remote-1.3.0-x800.apk`（minSdk 23）与 `deploy/app/x800-magisk.zip`。
+
+### GitHub Actions 自动发布（2026-11-27）
+
+- 新增 `.github/workflows/release.yml`：push main / 手动触发自动编译并创建 Release，tag = 版本号 + 日期；
+- 修复 `setup-android@v3` 安装已废弃 `tools` 包导致的失败，改用 runner 预装 SDK；
+- 修复 APK 文件名版本号重复，统一以 tag 命名。
 
 ### 中转存储层（2026-11-20）
 
